@@ -1,0 +1,39 @@
+# @package _global_
+# D3PM (Austin et al.) on REAL TinyStories (GPT-2 BPE, vocab 50258, ctx 256) — the SAME absorbing +
+# transformer + tau_leaping rig as the char-text unit, now at LM vocab. Tiny ~14M transformer.
+defaults:
+  - /space: discrete
+  - /schedule: absorbing
+  - /model: transformer
+  - /method: d3pm
+  - /sampler: tau_leaping
+  - /runner: training
+  - _self_
+
+plugins:
+  - envs.text
+
+space:
+  params: {num_classes: 50258, length: 256, mask_index: 50257}
+schedule:
+  params: {num_classes: 50258}
+model:
+  params: {vocab_size: 50258, length: 256, d_model: 128, depth: 4, n_heads: 4, output_type: logits}
+environment:
+  name: tinystories
+  params: {ctx: 256, max_stories: 4000}
+dataset:
+  name: distribution
+  params: {n_samples: 3000, seed: 0}
+runner:
+  params:
+    steps: 1500
+    batch_size: 32
+    lr: 3.0e-4
+    lr_schedule: cosine
+    ema_decay: 0.999
+    n_sample_steps: 64
+    n_eval_samples: 16
+    device: cuda
+    seed: 0
+    ckpt_path: checkpoints/text/tinystories/d3pm/small.pt

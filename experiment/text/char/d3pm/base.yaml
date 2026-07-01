@@ -1,0 +1,39 @@
+# @package _global_
+# D3PM (Austin et al.) on char-text — PURE CONFIG: absorbing schedule + d3pm x0-CE +
+# tau_leaping + Discrete space + the shared transformer + char_text. vocab=32 (31 chars + mask).
+defaults:
+  - /space: discrete
+  - /schedule: absorbing
+  - /model: transformer
+  - /method: d3pm
+  - /sampler: tau_leaping
+  - /runner: training
+  - _self_
+
+plugins:
+  - envs.text
+
+space:
+  params: {num_classes: 32, length: 32, mask_index: 31}
+schedule:
+  params: {num_classes: 32}
+model:
+  params: {vocab_size: 32, length: 32, d_model: 128, depth: 4, n_heads: 4, output_type: logits}
+environment:
+  name: char_text
+  params: {length: 32, repeat: 8}
+dataset:
+  name: distribution
+  params: {n_samples: 4000, seed: 0}
+runner:
+  params:
+    steps: 3000
+    batch_size: 64
+    lr: 3.0e-4
+    lr_schedule: cosine
+    ema_decay: 0.999
+    n_sample_steps: 64
+    n_eval_samples: 256
+    device: cpu
+    seed: 0
+    ckpt_path: checkpoints/text/char/d3pm/model.pt

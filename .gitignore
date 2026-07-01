@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Virtual environments
+.venv*/
+
+# Lockfile (not shipped — consumers resolve their own)
+uv.lock
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+.cache/
+
+# Run artifacts
+checkpoints/
+output/
+outputs/
+wandb/
+data/
+
+# Docs source (not shipped to the public repo — safety net; the sync manifest already omits it)
+docs/
+
+# MkDocs build
+site/

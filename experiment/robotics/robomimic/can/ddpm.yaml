@@ -1,0 +1,25 @@
+# @package _global_
+# Robomimic can (ph, lowdim) — diffusion policy DDPM on forge.
+# obs_dim 23 = object(14) + eef_pos(3) + eef_quat(4) + gripper_qpos(2).
+# cond_dim = n_obs_steps(2) * obs_dim(23) = 46; obs_dim (model) = cond_dim = 46.
+defaults:
+  - /experiment/robotics/robomimic/base
+  - _self_
+
+obs_dim: 23
+
+environment:
+  params:
+    name: can_ph
+    path: data/robomimic/can/ph/low_dim_v15.hdf5
+
+model:
+  params:
+    cond_dim: ${mul:${n_obs_steps},${obs_dim}}   # 2 * 23 = 46
+    obs_dim: ${mul:${n_obs_steps},${obs_dim}}    # = cond_dim; in-model ObsNormalizer sees full history
+
+runner:
+  params:
+    max_episode_steps: 500
+    n_rollout_episodes: 20
+    ckpt_path: checkpoints/robotics/robomimic/can/ddpm.pt

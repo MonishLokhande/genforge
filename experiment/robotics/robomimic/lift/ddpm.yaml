@@ -1,0 +1,24 @@
+# @package _global_
+# Robomimic lift (ph, lowdim) — diffusion policy DDPM on forge.
+# obs_dim 19 = object(10) + eef_pos(3) + eef_quat(4) + gripper_qpos(2).
+# cond_dim = n_obs_steps(2) * obs_dim(19) = 38; obs_dim (model) = cond_dim = 38.
+defaults:
+  - /experiment/robotics/robomimic/base
+  - _self_
+
+obs_dim: 19
+
+environment:
+  params:
+    name: lift_ph
+    path: data/robomimic/lift/ph/low_dim_v15.hdf5
+
+model:
+  params:
+    cond_dim: ${mul:${n_obs_steps},${obs_dim}}   # 2 * 19 = 38
+    obs_dim: ${mul:${n_obs_steps},${obs_dim}}    # = cond_dim; in-model ObsNormalizer sees full history
+
+runner:
+  params:
+    max_episode_steps: 400
+    ckpt_path: checkpoints/robotics/robomimic/lift/ddpm.pt

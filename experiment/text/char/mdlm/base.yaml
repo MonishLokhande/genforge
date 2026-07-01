@@ -1,0 +1,9 @@
+# @package _global_
+# MDLM (Sahoo et al.) — same absorbing/transformer/char_text substrate as D3PM; the ONLY change is
+# the masked-only, rate-weighted continuous-time NELBO (method=mdlm).
+defaults:
+  - /experiment/text/char/d3pm/base
+  - override /method: mdlm
+  - _self_
+runner:
+  params: {ckpt_path: checkpoints/text/char/mdlm/model.pt}

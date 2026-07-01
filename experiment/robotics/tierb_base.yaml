@@ -1,0 +1,57 @@
+# @package _global_
+# Tier B closed-loop diffusion policy — the shared recipe (DDPM on actions only; obs normalized
+# in-model by ObsNormalizer, NOT the membrane preprocessor — Inv 9). Family leaves (pusht, aloha)
+# add only their deltas: plugins + environment + action_dim/obs_dim + model cond_dim/obs_dim +
+# runner max_episode_steps/ckpt_path (+ success_threshold). Mirrors robomimic/base's recipe.
+defaults:
+  - /space: euclidean
+  - /schedule: vp_cosine
+  - /model: temporal_unet_janner
+  - /method: ddpm
+  - /sampler: ddpm
+  - /preprocessor: minmax
+  - /runner: policy_training
+  - _self_
+
+horizon: 16
+n_obs_steps: 2
+n_action_steps: 8
+
+dataset:
+  name: trajectory_window
+  params:
+    horizon: ${horizon}
+    layout: actions_only
+    include_actions: false
+    pad_before: ${sub:${n_obs_steps},1}
+    pad_after: ${sub:${n_action_steps},1}
+    stride: 1
+    n_obs_steps: ${n_obs_steps}   # cond = first-To obs flattened to (B, To*obs_dim) (Inv 9; matches PolicyWrapper)
+
+model:
+  params:
+    horizon: ${horizon}
+    transition_dim: ${action_dim}                # actions-only diffusion target
+    dim: 256
+    dim_mults: [1, 2, 4]
+    cond_predict_scale: true
+    output_type: eps
+
+sampler:
+  params:
+    clip_denoised: true   # REQUIRED for eps+vp_cosine over minmax→[-1,1] (else the action chain
+                          # diverges and the env clips every action to the same boundary).
+
+runner:
+  params:
+    steps: 100000
+    batch_size: 256
+    lr: 1.0e-4
+    weight_decay: 1.0e-6
+    ema_decay: 0.9999
+    n_obs_steps: ${n_obs_steps}
+    n_action_steps: ${n_action_steps}
+    n_rollout_episodes: 20
+    n_sample_steps: 100
+    device: cuda
+    seed: 0

@@ -1,0 +1,16 @@
+# @package _global_
+# maze2d-medium — horizon 256, 256 sampling steps.
+defaults:
+  - /experiment/robotics/maze2d/base
+  - _self_
+
+horizon: 256
+
+environment:
+  params:
+    name: maze2d-medium-v1
+
+runner:
+  params:
+    n_sample_steps: 256
+    ckpt_path: checkpoints/robotics/maze2d/medium/ddpm.pt

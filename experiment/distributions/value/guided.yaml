@@ -1,0 +1,10 @@
+# @package _global_
+# Phase 6: sample the generative model under value guidance (consumes the value checkpoint ONLY).
+defaults:
+  - /experiment/distributions/ddpm/base
+  - /control: value_guidance
+  - _self_
+
+runner:
+  params:
+    ckpt_path: checkpoints/distributions/value/guided.pt

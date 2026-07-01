@@ -1,0 +1,3 @@
+name: interpolant
+params:
+  epsilon: 1.0   # free diffusion-coefficient scale; ε(t)=epsilon·σ(t)². 0 ⇒ probability-flow ODE.

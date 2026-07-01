@@ -1,0 +1,22 @@
+# genforge root config (Hydra base+delta).
+#
+# Per-category config groups live in the sibling directories (space/, schedule/, model/, ...).
+# Experiments are base+delta bundles in the repo-root `experiment/` tree, which is added to the
+# Hydra searchpath at runtime by the CLI (env var GENFORGE_EXP_ROOT). Select an experiment with
+# `experiment=<env>/<params>/<method>` — it composes the component groups it needs.
+
+defaults:
+  - _self_
+  - experiment: ???        # mandatory: train/sample require an experiment selection
+
+# Global run settings (resolved into the checkpoint, Invariant 5).
+seed: 0
+
+hydra:
+  searchpath:
+    - file://${oc.env:GENFORGE_EXP_ROOT}
+  job:
+    chdir: false
+  output_subdir: null
+  run:
+    dir: .

@@ -1,0 +1,38 @@
+# @package _global_
+#
+# The first runnable genforge experiment: continuous DDPM on the bimodal 2-D Gaussian mixture.
+# A base bundle — it composes the component groups it needs (from the package config groups) and
+# applies experiment-level deltas. Leaf experiments reference this base by absolute path.
+
+defaults:
+  - /space: euclidean
+  - /schedule: vp_linear
+  - /model: mlp
+  - /method: ddpm
+  - /sampler: ddpm
+  - /runner: training
+  - _self_
+
+# Concrete env plugin (loaded by the builder so its @register decorators fire).
+plugins:
+  - envs.distributions
+
+environment:
+  name: gaussian_mixture
+  params: {means: [[-2.0, 0.0], [2.0, 0.0]], std: 0.2}
+dataset:
+  name: distribution
+  params: {n_samples: 20000, seed: 0}
+
+# Experiment-level deltas (override the group defaults).
+runner:
+  params:
+    steps: 4000
+    batch_size: 512
+    lr: 2.0e-3
+    lr_schedule: cosine
+    ema_decay: 0.999
+    n_sample_steps: 100
+    n_eval_samples: 2000
+    eval_radius: 0.6
+    ckpt_path: checkpoints/distributions/ddpm/model.pt

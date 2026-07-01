@@ -1,0 +1,10 @@
+name: temporal_unet_janner
+params:
+  dim: 32
+  dim_mults: [1, 2, 4, 8]
+  horizon: 32
+  transition_dim: 14
+  cond_dim: 0
+  cond_predict_scale: false
+  output_type: x0
+  obs_dim: 0

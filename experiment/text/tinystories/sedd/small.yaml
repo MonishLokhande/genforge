@@ -1,0 +1,12 @@
+# @package _global_
+# SEDD (Lou et al.) on TinyStories — concrete-score + score-entropy (rate_columns, structured at LM
+# vocab) + the analytic absorbing reverse. Same rig as D3PM; method/sampler/output_type swapped.
+defaults:
+  - /experiment/text/tinystories/d3pm/small
+  - override /method: sedd
+  - override /sampler: sedd
+  - _self_
+model:
+  params: {output_type: concrete_score}
+runner:
+  params: {ckpt_path: checkpoints/text/tinystories/sedd/small.pt}

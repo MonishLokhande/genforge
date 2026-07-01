@@ -1,0 +1,4 @@
+name: discrete
+params:
+  num_classes: 5
+  length: 1

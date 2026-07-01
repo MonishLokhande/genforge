@@ -1,0 +1,3 @@
+name: ddpm_huber
+params:
+  delta: 1.0   # residual threshold; |r| > delta is penalized linearly instead of quadratically

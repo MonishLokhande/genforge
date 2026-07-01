@@ -1,0 +1,13 @@
+# @package _global_
+# maze2d-umaze — horizon 128, 64 sampling steps.
+defaults:
+  - /experiment/robotics/maze2d/base
+  - _self_
+
+environment:
+  params:
+    name: maze2d-umaze-v1
+
+runner:
+  params:
+    ckpt_path: checkpoints/robotics/maze2d/umaze/ddpm.pt

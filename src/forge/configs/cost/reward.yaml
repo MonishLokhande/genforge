@@ -1,0 +1,4 @@
+name: reward
+params:
+  target: [2.0, 0.0]
+  weight: 1.0

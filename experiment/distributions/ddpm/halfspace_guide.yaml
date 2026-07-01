@@ -1,0 +1,14 @@
+# @package _global_
+# Phase 4: soft guidance toward x[0] >= 0 (pushes mass into the surviving +2 mode).
+defaults:
+  - /experiment/distributions/ddpm/base
+  - /preprocessor: standardize
+  - /cost: halfspace
+  - /control: guidance
+  - _self_
+
+control:
+  params: {scale: 8.0, sigma_weight: true}
+runner:
+  params:
+    ckpt_path: checkpoints/distributions/ddpm/halfspace_guide.pt

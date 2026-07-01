@@ -1,0 +1,4 @@
+name: vp_linear
+params:
+  beta_min: 0.1
+  beta_max: 20.0

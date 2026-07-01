@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - /experiment/text/char/sedd/base
+  - _self_
+model:
+  params: {d_model: 96, depth: 3}
+runner:
+  params: {steps: 800, ckpt_path: checkpoints/text/char/sedd/small.pt}

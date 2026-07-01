@@ -1,0 +1,20 @@
+# @package _global_
+# walker2d-medium-v2 — Janner x=[a|s], transition_dim = action_dim(6) + obs_dim(17) = 23.
+defaults:
+  - /experiment/robotics/locomotion/base
+  - _self_
+
+obs_dim: 17
+action_dim: 6
+
+environment:
+  params:
+    name: walker2d-medium-v2
+
+model:
+  params:
+    transition_dim: 23   # action_dim(6) + obs_dim(17)
+
+runner:
+  params:
+    ckpt_path: checkpoints/robotics/locomotion/walker2d/ddpm.pt

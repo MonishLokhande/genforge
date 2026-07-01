@@ -1,0 +1,16 @@
+# @package _global_
+# maze2d-large — horizon 384, 256 sampling steps.
+defaults:
+  - /experiment/robotics/maze2d/base
+  - _self_
+
+horizon: 384
+
+environment:
+  params:
+    name: maze2d-large-v1
+
+runner:
+  params:
+    n_sample_steps: 256
+    ckpt_path: checkpoints/robotics/maze2d/large/ddpm.pt

@@ -1,0 +1,4 @@
+name: fbsde_control
+params:
+  value_checkpoint: checkpoints/lq/fbsde/values.pt
+  scale: 1.0

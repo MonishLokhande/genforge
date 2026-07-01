@@ -1,0 +1,36 @@
+# @package _global_
+# Phase 5: goal-conditioned trajectory diffuser (diffuser-style planning) on a synthetic source.
+defaults:
+  - /space: euclidean
+  - /schedule: vp_linear
+  - /model: temporal_unet
+  - /method: conditional
+  - /sampler: ddpm
+  - /runner: planning
+  - _self_
+
+plugins:
+  - envs.trajectory_synth
+
+model:
+  params: {dim: 2, horizon: 32, base: 32, output_type: eps}
+dataset:
+  name: trajectory
+  params: {horizon: 32}
+environment:
+  name: trajectory_synth
+  params: {dim: 2, episode_len: 200, n_episodes: 60}
+preprocessor:
+  name: minmax
+  params: {}
+runner:
+  params:
+    steps: 4000
+    batch_size: 128
+    lr: 2.0e-3
+    lr_schedule: cosine
+    ema_decay: 0.999
+    n_sample_steps: 100
+    device: cpu
+    seed: 0
+    ckpt_path: checkpoints/trajectory/plan/model.pt

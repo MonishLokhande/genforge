@@ -1,0 +1,8 @@
+# @package _global_
+# MDLM (Sahoo et al.) on TinyStories — same rig as D3PM; only the masked rate-weighted NELBO changes.
+defaults:
+  - /experiment/text/tinystories/d3pm/small
+  - override /method: mdlm
+  - _self_
+runner:
+  params: {ckpt_path: checkpoints/text/tinystories/mdlm/small.pt}

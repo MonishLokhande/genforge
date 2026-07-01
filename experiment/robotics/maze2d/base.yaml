@@ -1,0 +1,63 @@
+# @package _global_
+# Tier A maze2d diffuser: Janner x=[a|s] (dim = action_dim(2) + obs_dim(4) = 6),
+# goal-conditioned at sample time via Pin controller pinning start AND goal (planning runner).
+# min-max -> [-1,1] membrane (Inv 9 normalizes only x=[a|s]).
+# Leaves set only horizon (dataset+model) and env dataset alias.
+defaults:
+  - /space: euclidean
+  - /schedule: vp_linear
+  - /model: temporal_unet_janner
+  - /method: conditional
+  - /sampler: ddpm
+  - /runner: planning
+  - _self_
+
+plugins:
+  - envs.robotics.maze2d
+
+horizon: 128
+
+environment:
+  name: maze2d
+  params:
+    terminal_threshold: 0.5
+
+dataset:
+  name: trajectory_window
+  params:
+    horizon: ${horizon}
+    layout: janner          # x = [action | state]
+    include_actions: true
+    stride: 1
+
+model:
+  params:
+    horizon: ${horizon}
+    dim: 32
+    dim_mults: [1, 4, 8]   # diffuser maze2d backbone (NOT locomotion's [1,2,4,8])
+    transition_dim: 6       # action_dim(2) + obs_dim(4); all three mazes share this
+    output_type: x0         # predict_epsilon=False -> x_start -> x0
+
+method:
+  params:
+    pin_positions: [0, -1]  # pin start AND goal (GoalDataset boundary inpainting)
+
+sampler:
+  params: {}                # diffuser's clip_denoised (clamp x0 to [-1,1] each reverse
+                            # step) is NOT applied — genforge DDPMSampler lacks it. Add for transplant
+                            # fidelity; the var>=0 clamp in ddpm.py does NOT cover this.
+
+preprocessor:
+  name: minmax              # LimitsNormalizer -> [-1,1]; membrane touches only x=[a|s] (Inv 9)
+  params: {}
+
+runner:
+  params:
+    steps: 200000
+    batch_size: 32
+    lr: 2.0e-4
+    ema_decay: 0.995
+    n_sample_steps: 64
+    device: cuda
+    seed: 0
+    ckpt_path: checkpoints/robotics/maze2d/model.pt

@@ -1,0 +1,20 @@
+name: training
+params:
+  steps: 2000
+  batch_size: 256
+  lr: 1.0e-3
+  ema_decay: 0.999
+  n_sample_steps: 100
+  n_eval_samples: 2000
+  eval_radius: 0.6
+  device: cpu
+  seed: 0
+  # Optional experiment logging — needs the `logging` extra (pip install genforge[logging]).
+  # Absent/false => no-op logger + plain loop; a default run is unchanged. Any runner accepts
+  # these via CLI too, e.g. runner.params.log.wandb=true (or env FORGE_WANDB=1).
+  log:
+    wandb: false      # off by default; no wandb import, no login prompt
+    project: forge
+    mode: null        # online | offline | disabled
+    name: null        # run name; defaults to <method>-<steps>steps
+    progress: false   # tqdm bar; plain loop if tqdm absent or stderr is non-TTY

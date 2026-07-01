@@ -1,0 +1,14 @@
+# @package _global_
+# Phase 4 (r2): keep x[0] >= 0 with a CBF drift-surface safety filter (reads the rate ẋ).
+defaults:
+  - /experiment/distributions/ddpm/base
+  - /preprocessor: standardize
+  - /cost: barrier
+  - /control: cbf
+  - _self_
+
+control:
+  params: {alpha: 1.0}
+runner:
+  params:
+    ckpt_path: checkpoints/distributions/ddpm/halfspace_cbf.pt

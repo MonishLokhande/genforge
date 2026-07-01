@@ -1,0 +1,8 @@
+name: transformer
+params:
+  vocab_size: 32        # = char_text unique chars (31) + 1 mask token
+  length: 32
+  d_model: 128
+  depth: 4
+  n_heads: 4
+  output_type: logits

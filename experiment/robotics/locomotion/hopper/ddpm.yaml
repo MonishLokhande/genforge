@@ -1,0 +1,20 @@
+# @package _global_
+# hopper-medium-v2 — Janner x=[a|s], transition_dim = action_dim(3) + obs_dim(11) = 14.
+defaults:
+  - /experiment/robotics/locomotion/base
+  - _self_
+
+obs_dim: 11
+action_dim: 3
+
+environment:
+  params:
+    name: hopper-medium-v2
+
+model:
+  params:
+    transition_dim: 14   # action_dim(3) + obs_dim(11)
+
+runner:
+  params:
+    ckpt_path: checkpoints/robotics/locomotion/hopper/ddpm.pt

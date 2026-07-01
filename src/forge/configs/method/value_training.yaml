@@ -1,0 +1,4 @@
+name: value_training
+params:
+  target: [2.0, 0.0]
+  weight: 1.0

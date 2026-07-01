@@ -1,0 +1,4 @@
+name: vp_cosine
+params:
+  s: 0.008
+  parameterization: sqrt_alpha_bar

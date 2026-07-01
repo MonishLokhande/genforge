@@ -1,0 +1,5 @@
+name: categorical_mlp
+params:
+  num_classes: 5
+  hidden: 128
+  depth: 3

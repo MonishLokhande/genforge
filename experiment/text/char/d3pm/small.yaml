@@ -1,0 +1,9 @@
+# @package _global_
+# Fast smoke leaf (smaller model + fewer steps) for the D3PM char-text pipeline.
+defaults:
+  - /experiment/text/char/d3pm/base
+  - _self_
+model:
+  params: {d_model: 64, depth: 2}
+runner:
+  params: {steps: 800, ckpt_path: checkpoints/text/char/d3pm/small.pt}

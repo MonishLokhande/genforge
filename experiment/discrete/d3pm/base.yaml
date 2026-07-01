@@ -1,0 +1,38 @@
+# @package _global_
+# Phase 3: discrete D3PM (absorbing/mask diffusion) on a toy categorical target.
+defaults:
+  - /space: discrete
+  - /schedule: absorbing
+  - /model: categorical_mlp
+  - /method: d3pm
+  - /sampler: tau_leaping
+  - /runner: training
+  - _self_
+
+plugins:
+  - envs.discrete_toy
+
+space:
+  params: {num_classes: 5, length: 1, mask_index: 4}
+schedule:
+  params: {num_classes: 5}
+model:
+  params: {num_classes: 5}
+environment:
+  name: categorical_toy
+  params: {num_classes: 4, length: 1, probs: [1, 2, 3, 4]}
+dataset:
+  name: distribution
+  params: {n_samples: 20000, seed: 0}
+runner:
+  params:
+    steps: 2500
+    batch_size: 512
+    lr: 1.0e-3
+    lr_schedule: cosine
+    ema_decay: 0.999
+    n_sample_steps: 50
+    n_eval_samples: 8000
+    device: cpu
+    seed: 0
+    ckpt_path: checkpoints/discrete/d3pm/model.pt

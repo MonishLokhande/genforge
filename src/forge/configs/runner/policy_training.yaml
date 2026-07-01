@@ -1,0 +1,9 @@
+name: policy_training
+params:
+  steps: 100000
+  batch_size: 256
+  lr: 1.0e-4
+  ema_decay: 0.9999
+  n_sample_steps: 100
+  device: cuda
+  seed: 0

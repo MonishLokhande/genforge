@@ -1,0 +1,7 @@
+name: value_training
+params:
+  steps: 2000
+  batch_size: 512
+  lr: 1.0e-3
+  device: cpu
+  seed: 0

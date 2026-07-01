@@ -1,0 +1,7 @@
+name: planning
+params:
+  steps: 2000
+  batch_size: 128
+  lr: 1.0e-3
+  device: cpu
+  seed: 0

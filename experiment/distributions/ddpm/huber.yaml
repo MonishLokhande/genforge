@@ -1,0 +1,11 @@
+# @package _global_
+# Worked example: the exact DDPM recipe, but with a Huber loss instead of MSE.
+# The ONLY change is the method — schedule, model, sampler, runner are all inherited unchanged.
+defaults:
+  - /experiment/distributions/ddpm/base
+  - override /method: ddpm_huber
+  - _self_
+
+runner:
+  params:
+    ckpt_path: checkpoints/distributions/ddpm/huber.pt

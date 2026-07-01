@@ -1,0 +1,6 @@
+name: mlp
+params:
+  dim: 2
+  hidden: 128
+  depth: 3
+  output_type: eps

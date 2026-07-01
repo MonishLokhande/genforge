@@ -1,0 +1,12 @@
+# @package _global_
+# MDLM with the paper's time-independent net (Sahoo et al., Table 12): drop adaLN/time conditioning
+# and use rotary positions — equal perplexity at ~2x faster sampling. Same objective as mdlm/base.
+defaults:
+  - /experiment/text/char/mdlm/base
+  - _self_
+model:
+  params:
+    time_conditioned: false
+    rope: true
+runner:
+  params: {ckpt_path: checkpoints/text/char/mdlm/timeless.pt}

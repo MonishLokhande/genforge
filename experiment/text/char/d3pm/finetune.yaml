@@ -1,0 +1,13 @@
+# @package _global_
+# Demo: warm-start from the `small` checkpoint and LoRA-fine-tune (frozen base + adapters).
+# Train the base first:   forge train experiment=text/char/d3pm/small
+# Then fine-tune:         forge train experiment=text/char/d3pm/finetune
+defaults:
+  - /experiment/text/char/d3pm/small
+  - _self_
+runner:
+  params:
+    warm_start: checkpoints/text/char/d3pm/small.pt   # load base weights only, fresh optimizer
+    lora: {r: 8, alpha: 16}                            # freeze base; train FFN+head adapters
+    steps: 400
+    ckpt_path: checkpoints/text/char/d3pm/finetune.pt

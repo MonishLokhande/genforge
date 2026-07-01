@@ -1,0 +1,3 @@
+name: cfm_linear
+params:
+  sigma_min: 0.01

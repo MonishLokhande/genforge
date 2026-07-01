@@ -1,0 +1,12 @@
+# @package _global_
+# Phase 4: hard constraint x[0] >= 0 via Projection (clamps the left mode onto the boundary).
+defaults:
+  - /experiment/distributions/ddpm/base
+  - /preprocessor: standardize
+  - /cost: halfspace
+  - /control: projection
+  - _self_
+
+runner:
+  params:
+    ckpt_path: checkpoints/distributions/ddpm/halfspace_project.pt

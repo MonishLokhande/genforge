@@ -1,0 +1,65 @@
+# @package _global_
+# Tier B robomimic closed-loop diffusion policy — DDPM on actions only (Inv 9: obs
+# normalized in-model by ObsNormalizer, NOT the membrane preprocessor).
+# Leaves set obs_dim + env params + max_episode_steps only.
+defaults:
+  - /space: euclidean
+  - /schedule: vp_cosine
+  - /model: temporal_unet_janner
+  - /method: ddpm
+  - /sampler: ddpm
+  - /preprocessor: minmax
+  - /runner: policy_training
+  - _self_
+
+plugins:
+  - envs.robotics.robomimic
+
+horizon: 16
+n_obs_steps: 2
+n_action_steps: 8
+action_dim: 7        # OSC pose deltas (6) + gripper (1)
+
+environment:
+  name: robomimic
+  params: {}
+
+dataset:
+  name: trajectory_window
+  params:
+    horizon: ${horizon}
+    layout: actions_only
+    include_actions: false
+    pad_before: ${sub:${n_obs_steps},1}
+    pad_after: ${sub:${n_action_steps},1}
+    stride: 1
+    n_obs_steps: ${n_obs_steps}   # cond = first-To obs flattened to (B, To*obs_dim) (Inv 9; matches PolicyWrapper)
+
+model:
+  params:
+    horizon: ${horizon}
+    transition_dim: ${action_dim}
+    dim: 256
+    dim_mults: [1, 2, 4]
+    cond_predict_scale: true
+    output_type: eps
+
+sampler:
+  params:
+    clip_denoised: true   # REQUIRED for eps+vp_cosine over minmax→[-1,1]: x0_from_eps divides by
+                          # α→0 at high t, so without the x0hat clamp the action chain diverges
+                          # (~1e10) and the env clips every action to the same boundary.
+
+runner:
+  params:
+    steps: 100000
+    batch_size: 256
+    lr: 1.0e-4
+    weight_decay: 1.0e-6
+    ema_decay: 0.9999
+    n_obs_steps: ${n_obs_steps}
+    n_action_steps: ${n_action_steps}
+    n_rollout_episodes: 20
+    n_sample_steps: 100
+    device: cuda
+    seed: 0

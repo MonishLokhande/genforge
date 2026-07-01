@@ -1,0 +1,5 @@
+name: value_guidance
+params:
+  value_checkpoint: checkpoints/distributions/value/values.pt
+  scale: 3.0
+  sigma_weight: true

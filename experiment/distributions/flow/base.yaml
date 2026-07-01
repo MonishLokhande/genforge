@@ -1,0 +1,35 @@
+# @package _global_
+# Phase 2: flow matching (rectified flow) on the bimodal 2-D target.
+defaults:
+  - /space: euclidean
+  - /schedule: linear_flow
+  - /model: mlp
+  - /method: flow_matching
+  - /sampler: flow
+  - /runner: training
+  - _self_
+
+plugins:
+  - envs.distributions
+
+environment:
+  name: gaussian_mixture
+  params: {means: [[-2.0, 0.0], [2.0, 0.0]], std: 0.2}
+dataset:
+  name: distribution
+  params: {n_samples: 20000, seed: 0}
+
+model:
+  params:
+    output_type: velocity
+runner:
+  params:
+    steps: 4000
+    batch_size: 512
+    lr: 2.0e-3
+    lr_schedule: cosine
+    ema_decay: 0.999
+    n_sample_steps: 100
+    n_eval_samples: 2000
+    eval_radius: 0.6
+    ckpt_path: checkpoints/distributions/flow/model.pt

@@ -1,0 +1,41 @@
+# @package _global_
+# Stochastic-interpolant SDE sampling on the bimodal 2-D target (Albergo & Vanden-Eijnden, 2023).
+# Same velocity-regression training as flow matching, but over a variance-preserving trig
+# interpolant (si_trig), sampled with the `interpolant` SDE — whose free diffusion coefficient ε
+# shares the ODE's marginals. Set sampler.params.epsilon=0 to recover the probability-flow ODE.
+defaults:
+  - /space: euclidean
+  - /schedule: si_trig
+  - /model: mlp
+  - /method: flow_matching
+  - /sampler: interpolant
+  - /runner: training
+  - _self_
+
+plugins:
+  - envs.distributions
+
+environment:
+  name: gaussian_mixture
+  params: {means: [[-2.0, 0.0], [2.0, 0.0]], std: 0.2}
+dataset:
+  name: distribution
+  params: {n_samples: 20000, seed: 0}
+
+model:
+  params:
+    output_type: velocity
+sampler:
+  params:
+    epsilon: 1.0
+runner:
+  params:
+    steps: 4000
+    batch_size: 512
+    lr: 2.0e-3
+    lr_schedule: cosine
+    ema_decay: 0.999
+    n_sample_steps: 100
+    n_eval_samples: 2000
+    eval_radius: 0.6
+    ckpt_path: checkpoints/distributions/interpolant/model.pt

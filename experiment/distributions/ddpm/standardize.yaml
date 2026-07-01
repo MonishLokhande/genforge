@@ -1,0 +1,10 @@
+# @package _global_
+# Phase 1.5: the bimodal DDPM experiment with the standardization membrane inserted.
+defaults:
+  - /experiment/distributions/ddpm/base
+  - /preprocessor: standardize
+  - _self_
+
+runner:
+  params:
+    ckpt_path: checkpoints/distributions/ddpm/standardize.pt

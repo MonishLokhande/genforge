@@ -1,0 +1,6 @@
+name: temporal_unet
+params:
+  dim: 2
+  horizon: 32
+  base: 32
+  output_type: eps

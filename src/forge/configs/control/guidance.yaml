@@ -1,0 +1,4 @@
+name: guidance
+params:
+  scale: 2.0
+  sigma_weight: true

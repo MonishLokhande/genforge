@@ -1,0 +1,11 @@
+# @package _global_
+# Phase 2: a DDPM-trained (eps) model sampled deterministically with DDIM in few steps.
+defaults:
+  - /experiment/distributions/ddpm/base
+  - override /sampler: ddim
+  - _self_
+
+runner:
+  params:
+    n_sample_steps: 50
+    ckpt_path: checkpoints/distributions/ddim/model.pt

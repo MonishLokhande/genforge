@@ -1,0 +1,36 @@
+# @package _global_
+# Tier B ALOHA sim (transfer-cube, lowdim) closed-loop diffusion policy — deltas over the shared
+# tierb_base recipe (DDPM on actions only; obs normalized in-model by ObsNormalizer, NOT the membrane
+# — Inv 9). Data: lerobot/aloha_sim_transfer_cube_human (HF) — 14-d obs (qpos of both arms) and 14-d
+# action (joint targets); no reward column → training-only signal, episode reward comes from rollout.
+# Rollout: gym_aloha/AlohaTransferCube-v0 with obs_type=pixels_agent_pos (agent_pos=14-d qpos matches
+# the dataset's observation.state); flatten_env_obs maps it back to the 14-d training layout.
+# cond_dim = n_obs_steps(2)*obs_dim(14) = 28. NOTE: rollout renders MuJoCo offscreen — set MUJOCO_GL=egl.
+defaults:
+  - /experiment/robotics/tierb_base
+  - _self_
+
+plugins:
+  - envs.robotics.hf_lowdim
+
+action_dim: 14       # ALOHA bimanual joint targets (2 arms × 7)
+obs_dim: 14          # qpos of both arms
+
+environment:
+  name: hf_lowdim
+  params:
+    name: lerobot/aloha_sim_transfer_cube_human
+    obs_keys:
+      - observation.state
+    env_kwargs:
+      obs_type: pixels_agent_pos   # gym_aloha Dict obs {pixels, agent_pos}; agent_pos=qpos(14)
+
+model:
+  params:
+    cond_dim: ${mul:${n_obs_steps},${obs_dim}}   # 2 * 14 = 28
+    obs_dim: ${mul:${n_obs_steps},${obs_dim}}    # = cond_dim; in-model ObsNormalizer sees full history
+
+runner:
+  params:
+    max_episode_steps: 400
+    ckpt_path: checkpoints/robotics/aloha/ddpm.pt

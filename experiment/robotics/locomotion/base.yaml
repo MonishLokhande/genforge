@@ -1,0 +1,55 @@
+# @package _global_
+# Tier A locomotion diffuser: Janner action-first x=[a|s] trajectory diffusion, goal-conditioned
+# at sample time via the Pin controller (genforge collapsed inpainting into conditional+Pin, Inv 6).
+# Leaves set env name + obs_dim/action_dim (hence model.transition_dim) only.
+defaults:
+  - /space: euclidean
+  - /schedule: vp_linear
+  - /model: temporal_unet_janner
+  - /method: conditional
+  - /sampler: ddpm
+  - /runner: planning
+  - _self_
+
+plugins:
+  - envs.robotics.locomotion
+
+horizon: 32
+
+environment:
+  name: minari
+  params: {}
+
+dataset:
+  name: trajectory_window
+  params:
+    horizon: ${horizon}
+    layout: janner          # x = [action | state]
+    include_actions: true
+    stride: 1
+
+model:
+  params:
+    horizon: ${horizon}
+    dim: 32
+    dim_mults: [1, 2, 4, 8]
+    output_type: x0         # predict_epsilon=False → x_start → x0
+
+method:
+  params:
+    pin_positions: [0]      # locomotion conditions on the current state only (start pin)
+
+preprocessor:
+  name: standardize         # TrajectoryGaussian is just Standardize; standardize is built-in
+  params: {}
+
+runner:
+  params:
+    steps: 1000000
+    batch_size: 32
+    lr: 2.0e-4
+    ema_decay: 0.995
+    n_sample_steps: 20
+    device: cuda
+    seed: 0
+    ckpt_path: checkpoints/robotics/locomotion/model.pt

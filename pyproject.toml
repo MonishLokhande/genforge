@@ -1,0 +1,86 @@
+[project]
+name = "genforge"
+version = "0.1.0"
+description = "A unified, PyTorch-based framework for generative-modeling techniques with a clean control layer."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Monish Lokhande" }
+]
+requires-python = ">=3.11"
+keywords = [
+    "generative-models", "diffusion", "flow-matching", "score-based",
+    "discrete-diffusion", "guidance", "control", "pytorch",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.26",
+    "hydra-core>=1.3",
+    "omegaconf>=2.3",
+]
+
+[project.optional-dependencies]
+# Optional extras keep the 2-D distributions core light.
+flow = ["scipy>=1.11"]   # minibatch-OT coupling for ot_cfm
+text = ["tiktoken>=0.7", "datasets>=2.18"]   # real GPT-2 BPE + streamed corpora (e.g. TinyStories)
+logging = ["wandb>=0.16", "tqdm>=4.66"]   # optional experiment logging + progress bars (off by default)
+
+[project.urls]
+Homepage = "https://github.com/MonishLokhande/genforge"
+Repository = "https://github.com/MonishLokhande/genforge"
+Documentation = "https://github.com/MonishLokhande/genforge#readme"
+Issues = "https://github.com/MonishLokhande/genforge/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+docs = [
+    "mkdocs-material>=9.7.6",
+]
+# Offline-RL / robot adapters (maze2d / locomotion / hf_lowdim / robomimic). Pins copied from an offline-RL reference implementation.
+# A dependency-group, not an extra: it contains a git direct-reference (robomimic) that PyPI rejects
+# in published wheel metadata. Sync locally with: uv sync --group robotics
+robotics = [
+    "h5py>=3.16",                # d4rl / robomimic HDF5 adapters read buffers directly
+    "gym-pusht>=0.1.6",
+    "gym-aloha>=0.1.3",
+    "gymnasium>=1.3.0",
+    "gymnasium-robotics>=1.4.2",
+    "datasets>=2.19.0",
+    "minari[hdf5,hf]>=0.5.3",
+    "mujoco>=3.8.0",
+    "robomimic @ git+https://github.com/ARISE-Initiative/robomimic.git@v0.5.0",
+    "robosuite",
+]
+
+[tool.uv]
+constraint-dependencies = ["pymunk<7", "numba>=0.65"]  # keep robosuite off the py<3.10 numba 0.53
+# robomimic 0.5 hard-pins an old HF stack; relax to >= so the modern stack is kept.
+override-dependencies = [
+    "transformers>=4.41.2",
+    "diffusers>=0.11.1",
+    "huggingface-hub>=0.23.4",
+]
+
+[tool.uv.build-backend]
+module-name = "forge"
+
+[tool.pytest.ini_options]
+# Put the repo root on sys.path for the test session so the repo-root `envs/*` plugin packages are
+# importable (the package install only adds `src/` via its .pth). conftest.py then registers them.
+pythonpath = ["."]
+
+[project.scripts]
+forge = "forge.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
