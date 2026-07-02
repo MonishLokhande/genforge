@@ -86,8 +86,9 @@ class HFLowdimAdapter:
             from datasets import load_dataset
         except ImportError as e:
             raise ImportError(
-                "`datasets` is required for HFLowdimAdapter. "
-                "Install it with: uv sync --group robotics"
+                "Robotics experiments require the robotics dependency group, which is only "
+                "installable from a source checkout: git clone the genforge repo and run "
+                "`uv sync --group robotics`."
             ) from e
         return load_dataset(self.repo_id, split="train")
 
@@ -119,8 +120,9 @@ class HFLowdimAdapter:
                 import_module("gym_aloha")
         except ImportError as e:
             raise ImportError(
-                f"The env package for {self.env_id} is not installed. "
-                "Install gym-pusht / gym-aloha as appropriate."
+                "Robotics experiments require the robotics dependency group, which is only "
+                "installable from a source checkout: git clone the genforge repo and run "
+                "`uv sync --group robotics`."
             ) from e
 
     def build_env(self):

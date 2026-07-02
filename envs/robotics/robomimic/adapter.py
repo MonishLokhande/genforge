@@ -164,8 +164,9 @@ class RobomimicAdapter:
             import robomimic.utils.env_utils as EnvUtils
         except ImportError as e:
             raise ImportError(
-                "robomimic and robosuite are required to construct the env. "
-                "Install with: uv sync --group robotics"
+                "Robotics experiments require the robotics dependency group, which is only "
+                "installable from a source checkout: git clone the genforge repo and run "
+                "`uv sync --group robotics`."
             ) from e
         self.ensure_obs_utils()
         return EnvUtils.create_env_from_metadata(

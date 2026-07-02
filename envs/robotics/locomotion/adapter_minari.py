@@ -49,7 +49,11 @@ class MinariAdapter:
         try:
             import minari
         except ImportError as exc:
-            raise ImportError("pip install minari") from exc
+            raise ImportError(
+                "Robotics experiments require the robotics dependency group, which is only "
+                "installable from a source checkout: git clone the genforge repo and run "
+                "`uv sync --group robotics`."
+            ) from exc
         self.ids = resolve_minari_ids(name)
         self.datasets = [minari.load_dataset(d, download=True) for d in self.ids]
 
