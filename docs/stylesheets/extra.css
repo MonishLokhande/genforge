@@ -1,0 +1,5 @@
+/* Header repo source: keep only the GitHub icon (still hyperlinked to repo_url);
+   hide the "owner/repo" text label and any star/fork facts. */
+.md-source__repository {
+  display: none;
+}

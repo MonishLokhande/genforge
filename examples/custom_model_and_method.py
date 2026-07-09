@@ -85,8 +85,8 @@ class LogCosh(Method):
     Written against the three primitives only: sample t, draw ``x_t`` with the
     forward primitive ``space.forward_sample``, then ask the *schedule* for the regression target
     and SNR weight. No α/σ or output-type math lives here (Invariant 3), so the SAME objective
-    trains an eps / x0 / score / velocity model unchanged. (To swap only the penalty on an existing
-    objective, subclass it instead — see ``methods/ddpm_huber.py``.)
+    trains an eps / x0 / score / velocity model unchanged. (To swap only the penalty without a new
+    method, inject a `criterion` instead — e.g. ``method=ddpm criterion=huber``; see ``methods/criterion.py``.)
     """
 
     def __init__(self, schedule, space, t_eps: float = 1e-3):

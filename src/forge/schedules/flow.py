@@ -5,8 +5,9 @@ is the same affine form every continuous schedule exposes, ``q(x_t | x_data) = N
 so the **same** Euclidean forward primitive is reused — no `space` change is needed to add flow
 (that's the Phase 2 proof that the paradigm axis is clean).
 
-The plain α/σ output-type conversions come from the `ContinuousSchedule` base; the velocity
-conversions, which also need the path derivatives `α̇, σ̇`, are implemented here (Invariant 3).
+All output-type conversions — including the velocity conversions that need the path derivatives
+`α̇, σ̇` — come from the `AffineGaussianContinuousSchedule` base; each flow supplies α/σ/α̇/σ̇ and
+overrides only `G` (=0, probability-flow ODE) and the flow-direction grid (Invariant 3).
 """
 
 from __future__ import annotations
@@ -15,23 +16,20 @@ import math
 
 import torch
 
-from ..core.interfaces import ContinuousSchedule
+from ..core.interfaces import AffineGaussianContinuousSchedule
 from ..core.registry import register
 from ..utils.torch_utils import expand_like as _expand
 
 
-class _AffineFlow(ContinuousSchedule):
-    """Shared machinery for affine-path flows: x_t = α(t)·x_data + σ(t)·ε, velocity = α̇ x_data + σ̇ ε."""
+class _AffineFlow(AffineGaussianContinuousSchedule):
+    """Shared machinery for affine-path flows: x_t = α(t)·x_data + σ(t)·ε, velocity = α̇ x_data + σ̇ ε.
 
-    # Subclasses implement alpha/sigma and their derivatives.
-    def dalpha(self, t: torch.Tensor) -> torch.Tensor:  # α̇(t)
-        raise NotImplementedError
-
-    def dsigma(self, t: torch.Tensor) -> torch.Tensor:  # σ̇(t)
-        raise NotImplementedError
+    Subclasses supply α/σ and their derivatives α̇/σ̇ (the base's abstract `alpha_dot`/`sigma_dot`);
+    the base derives every output-type conversion, incl. velocity↔x0, from those four."""
 
     def G(self, t: torch.Tensor) -> torch.Tensor:
-        # Probability-flow ODE: no diffusion.
+        # Probability-flow ODE: no diffusion. (Overrides the base's VP-derived G, which isn't
+        # meaningful for a non-variance-preserving interpolant.)
         t = torch.as_tensor(t, dtype=torch.float32)
         return torch.zeros_like(t)
 
@@ -44,19 +42,6 @@ class _AffineFlow(ContinuousSchedule):
         """Flow integrates 0 → 1 (prior → data)."""
         return torch.linspace(0.0, 1.0, n_steps + 1)
 
-    # velocity conversions (depend on the path derivatives).
-    def velocity_from_x0(self, xt, x0, t):
-        a, s = self._coeffs(t, xt)
-        da, ds = _expand(self.dalpha(t), xt), _expand(self.dsigma(t), xt)
-        eps = (xt - a * x0) / s
-        return da * x0 + ds * eps
-
-    def x0_from_velocity(self, xt, v, t):
-        a, s = self._coeffs(t, xt)
-        da, ds = _expand(self.dalpha(t), xt), _expand(self.dsigma(t), xt)
-        # v = da·x0 + ds·(xt − a·x0)/s  ⟹  x0 = (v − (ds/s)·xt) / (da − ds·a/s)
-        return (v - (ds / s) * xt) / (da - ds * a / s)
-
 
 @register("schedule", "linear_flow")
 class LinearFlow(_AffineFlow):
@@ -68,11 +53,11 @@ class LinearFlow(_AffineFlow):
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
         return 1.0 - torch.as_tensor(t, dtype=torch.float32)
 
-    def dalpha(self, t):
+    def alpha_dot(self, t):
         t = torch.as_tensor(t, dtype=torch.float32)
         return torch.ones_like(t)
 
-    def dsigma(self, t):
+    def sigma_dot(self, t):
         t = torch.as_tensor(t, dtype=torch.float32)
         return -torch.ones_like(t)
 
@@ -92,11 +77,11 @@ class CFMLinear(_AffineFlow):
         t = torch.as_tensor(t, dtype=torch.float32)
         return 1.0 - (1.0 - self.sigma_min) * t
 
-    def dalpha(self, t):
+    def alpha_dot(self, t):
         t = torch.as_tensor(t, dtype=torch.float32)
         return torch.ones_like(t)
 
-    def dsigma(self, t):
+    def sigma_dot(self, t):
         t = torch.as_tensor(t, dtype=torch.float32)
         return -(1.0 - self.sigma_min) * torch.ones_like(t)
 
@@ -116,10 +101,10 @@ class TrigInterpolant(_AffineFlow):
         t = torch.as_tensor(t, dtype=torch.float32)
         return torch.cos(0.5 * math.pi * t)
 
-    def dalpha(self, t):
+    def alpha_dot(self, t):
         t = torch.as_tensor(t, dtype=torch.float32)
         return 0.5 * math.pi * torch.cos(0.5 * math.pi * t)
 
-    def dsigma(self, t):
+    def sigma_dot(self, t):
         t = torch.as_tensor(t, dtype=torch.float32)
         return -0.5 * math.pi * torch.sin(0.5 * math.pi * t)

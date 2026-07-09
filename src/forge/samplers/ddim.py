@@ -24,7 +24,7 @@ class DDIMSampler(Sampler):
     def step(self, x: torch.Tensor, t, s, cond=None) -> torch.Tensor:
         pred = self.model(x, t, cond)
         x0_hat = self.schedule.x0_from(self.model.output_type, x, pred, t)
-        x0_hat = self._apply_control(x0_hat, x, t)   # control bends the clean estimate (Invariant 6)
+        x0_hat = self._apply_control(x0_hat, x, t, cond)   # control bends the clean estimate (Invariant 6)
         # Re-derive eps from the (possibly controlled) x̂0 so the (x0, eps) pair stays self-consistent
         # — without control this equals the model's eps (round-trip); with control it tracks it.
         eps_hat = self.schedule.eps_from_x0(x, x0_hat, t)

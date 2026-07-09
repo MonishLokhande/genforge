@@ -8,7 +8,8 @@ The idea: a generative model is one process that turns a simple starting distrib
 into data, and every way of steering it —
 conditioning, guidance, constraints, planning — is the **same move**: reweight that process so the
 outcomes you want become more likely. The process, the steering, and how the steering is approximated
-are separate, swappable parts. A full documentation site (architecture, experiments, extending) is coming soon.
+are separate, swappable parts. Full documentation — installation, architecture, experiments,
+extending — lives in `docs/` (see [Documentation](#documentation)).
 
 ## Install
 
@@ -51,7 +52,8 @@ dependency order — adding one is a single decorated class plus a config leaf, 
 
 - **`src/forge/`** — the framework only: `core` (registry · builder · interfaces · protocols ·
   plugins), `spaces`, `schedules`, `models`, `methods`, `samplers`, `costs`, `control`,
-  `preprocessing`, `runners`. Protocols, ABCs, and generic utilities — never concrete env code.
+  `preprocessing`, `visualizations`, `runners`. Protocols, ABCs, and generic utilities — never
+  concrete env code.
 - **`envs/`** — concrete, swappable **data-source plugins** (environment + dataset + processor per
   package). An experiment loads them via its `plugins:` field; they are not baked into the core.
   Contracts: [`core/protocols.py`](src/forge/core/protocols.py).
@@ -81,8 +83,15 @@ uv run --extra text forge train experiment=text/tinystories/d3pm/small # same me
 
 ## Documentation
 
-A full documentation site — installation, architecture, experiments, and extending — is coming soon.
-Until then, this README plus the inline docstrings across `src/forge/` are the reference.
+The full documentation — installation, architecture, experiments, and extending — is the MkDocs
+site under `docs/`. Build and browse it locally:
+
+```bash
+uv sync --group docs     # mkdocs-material
+uv run mkdocs serve      # http://127.0.0.1:8000
+```
+
+This README plus the inline docstrings across `src/forge/` cover the essentials.
 
 ## License
 

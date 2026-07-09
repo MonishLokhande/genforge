@@ -23,10 +23,10 @@ from ..utils.torch_utils import expand_like as _expand
 if TYPE_CHECKING:  # keep heavy/optional imports out of the hot import path
     from torch import Generator, Tensor
 
-
-# ── space.py ──────────────────────────────────────────────────────────────────────────────────
+##-------------------------------------
 class Space(ABC):
-    """State space + forward kernel. The ONLY home of the continuous-vs-discrete distinction."""
+    """State space + forward kernel. The ONLY home of the continuous-vs-discrete distinction.
+    Can be discrete (CTMC / D3PM) or continuous (diffusion / flow). Deps injected at build."""
 
     @abstractmethod
     def prior_sample(self, shape, generator: "Optional[Generator]" = None) -> "Tensor":
@@ -41,163 +41,139 @@ class Space(ABC):
         """Sample x_t ~ q(x_t | x_0). The forward primitive (training)."""
         raise NotImplementedError
 
+##-------------------------------------
+class Discretization(ABC):
+    """HOW to space the t-grid for sampling (uniform, Karras/EDM, logSNR-uniform, ...).
+    Orthogonal to the noise curve itself and agnostic to the cont/disc distinction,
+    which remains owned solely by Space and Schedule (Invariant 1)."""
 
-# ── schedule.py ───────────────────────────────────────────────────────────────────────────────
+    @abstractmethod
+    def grid(self, schedule: "Schedule", n_steps: int) -> "Tensor":
+        raise NotImplementedError
+ 
+class UniformDiscretization(Discretization):
+    def grid(self, schedule, n_steps):
+        # Endpoints/direction belong to the schedule (diffusion 1→0, flow 0→1). A schedule advertises
+        # its sweep via `discretize`; absent one (a minimal stub), fall back to the diffusion default
+        # — the pre-refactor behaviour. Delegate now; swap for endpoint-aware spacing
+        # (Karras/EDM) when a schedule needs it.
+        if hasattr(schedule, "discretize"):
+            return schedule.discretize(n_steps)
+        return torch.linspace(1.0, 0.0, n_steps + 1)
+    
+##--------------------------------------
+
 class Schedule(ABC):
-    """Time/noise schedule. With `Space`, the only place cont/disc may diverge (Invariant 1)."""
-
-    @abstractmethod
-    def discretize(self, n_steps: int) -> "Tensor":
-        """Time grid for sampling (1→0 for diffusion, 0→1 for flow)."""
-        raise NotImplementedError
-
-
-class ContinuousSchedule(Schedule):
-    """Continuous schedule + the shared output-type conversion math (Invariant 3 lives here)."""
-
-    @abstractmethod
-    def alpha(self, t: "Tensor") -> "Tensor":
-        raise NotImplementedError
-
-    @abstractmethod
-    def sigma(self, t: "Tensor") -> "Tensor":
-        raise NotImplementedError
-
-    @abstractmethod
-    def G(self, t: "Tensor") -> "Tensor":
-        """Diffusion coefficient G_t."""
-        raise NotImplementedError
+    """Time/marginal schedule. With `Space`, the only place cont/disc may diverge. 
+    The convention followed is t=1 is known marginal and t=0 is clean data."""
 
     @abstractmethod
     def marginal(self, x0: "Tensor", t: "Tensor") -> "tuple[Tensor, Tensor]":
-        """(mean, std) of q(x_t | x_0)."""
+        """definition of q(x_t | x_0)."""
         raise NotImplementedError
 
-    # Output-type conversion — THE shared α/σ math. Lives here, nowhere else (Invariant 3).
-    # Affine marginals q(x_t|x_0)=N(α x_0, σ²) give ONE closed form for every continuous schedule,
-    # so the conversions are concrete on the base and samplers/methods never branch on output_type.
-    # A non-affine ContinuousSchedule would override these.
-    def _coeffs(self, t: "Tensor", ref: "Tensor") -> "tuple[Tensor, Tensor]":
-        """(α, σ) broadcast to ``ref``'s trailing dims — the shared affine coefficients."""
-        return _expand(self.alpha(t), ref), _expand(self.sigma(t), ref)
+class GaussianContinuousSchedule(Schedule):
+    @abstractmethod
+    def m(self, x0, t): raise NotImplementedError
+    @abstractmethod
+    def m_inverse(self, y, t): raise NotImplementedError
+    @abstractmethod
+    def L(self, t): raise NotImplementedError
+    @abstractmethod
+    def L_inverse(self, y, t): raise NotImplementedError
+    @abstractmethod
+    def m_dot(self, x0, t): raise NotImplementedError
+    @abstractmethod
+    def L_dot(self, t): raise NotImplementedError
 
-    def score_from_eps(self, xt: "Tensor", eps: "Tensor", t: "Tensor") -> "Tensor":
-        # score = ∇ log N(x_t; α x_0, σ²) = −(x_t − α x_0)/σ² = −ε/σ
-        _, s = self._coeffs(t, xt)
-        return -eps / s
+    def marginal(self, x0, t): return self.m(x0, t), self.L(t)
 
-    def score_from_x0(self, xt: "Tensor", x0: "Tensor", t: "Tensor") -> "Tensor":
-        a, s = self._coeffs(t, xt)
-        return -(xt - a * x0) / s**2
+    def eps_from_x0(self, xt, x0, t):
+        return self.L_inverse(xt - self.m(x0, t), t)
+    def score_from_x0(self, xt, x0, t):
+        residual = xt - self.m(x0, t)
+        return -self.L_inverse(self.L_inverse(residual, t), t)
+    def score_from_eps(self, xt, eps, t):
+        return -self.L_inverse(eps, t)
+    def velocity_from_x0(self, xt, x0, t):
+        eps = self.eps_from_x0(xt, x0, t)
+        return self.m_dot(x0, t) + _expand(self.L_dot(t), eps) * eps
 
-    def x0_from_eps(self, xt: "Tensor", eps: "Tensor", t: "Tensor") -> "Tensor":
-        a, s = self._coeffs(t, xt)
-        return (xt - s * eps) / a
-
-    def x0_from_score(self, xt: "Tensor", score: "Tensor", t: "Tensor") -> "Tensor":
-        a, s = self._coeffs(t, xt)
-        return (xt + s**2 * score) / a
-
-    def eps_from_x0(self, xt: "Tensor", x0: "Tensor", t: "Tensor") -> "Tensor":
-        a, s = self._coeffs(t, xt)
-        return (xt - a * x0) / s
-
-    # Velocity conversions — used by flow paradigms; a VP/score schedule may leave these unset.
-    def x0_from_velocity(self, xt: "Tensor", v: "Tensor", t: "Tensor") -> "Tensor":
+    def x0_from_eps(self, xt, eps, t):
+        return self.m_inverse(xt - _expand(self.L(t), eps) * eps, t)
+    def x0_from_score(self, xt, score, t):
+        return self.m_inverse(xt + _expand(self.L(t), score) ** 2 * score, t)
+    def x0_from_velocity(self, xt, v, t):
         raise NotImplementedError
 
-    def velocity_from_x0(self, xt: "Tensor", x0: "Tensor", t: "Tensor") -> "Tensor":
-        raise NotImplementedError
+    def drift_from_x0(self, xt, x0, t): return x0 - xt
+    def x0_from_drift(self, xt, drift, t): return xt + drift
+    def reverse_drift(self, xt, score, t): return self.x0_from_score(xt, score, t) - xt
 
-    # ── Control-surface relations (Invariant 6 drift surface). ──────────────────────────────────
-    # The control "drift" is the deterministic DATA-WARD heading of the reverse process — the rate
-    # at which the iterate moves toward its clean estimate, ẋ ∝ (x̂₀ − xₜ). Chosen over the raw
-    # probability-flow velocity because it is (a) exactly invertible and (b) data-ward with a
-    # uniform +1 slope dx̂₀/ddrift for EVERY paradigm (the PF velocity's sign flips between score and
-    # flow), so a drift filter (CBF/MPPI) acts in the correct direction without per-schedule signs.
-    # The per-step α/σ scaling of the true b_θ is reapplied downstream by the sampler's posterior.
-    def drift_from_x0(self, xt: "Tensor", x0: "Tensor", t: "Tensor") -> "Tensor":
-        return x0 - xt
-
-    def x0_from_drift(self, xt: "Tensor", drift: "Tensor", t: "Tensor") -> "Tensor":
-        return xt + drift
-
-    def reverse_drift(self, xt: "Tensor", score: "Tensor", t: "Tensor") -> "Tensor":
-        """Assemble the reverse drift (heading) from the score, via the implied clean estimate."""
-        return self.x0_from_score(xt, score, t) - xt
-
-    # ── Output-type DISPATCH (still inside the schedule — Invariant 3). ──────────────────────────
-    # Samplers/methods call these with `model.output_type`; the schedule selects the right
-    # conversion. The caller never does conversion math and never branches on output_type itself.
-    def x0_from(self, output_type: str, xt: "Tensor", pred: "Tensor", t: "Tensor") -> "Tensor":
-        if output_type == "x0":
-            return pred
-        if output_type == "eps":
-            return self.x0_from_eps(xt, pred, t)
-        if output_type == "score":
-            return self.x0_from_score(xt, pred, t)
-        if output_type == "velocity":
-            return self.x0_from_velocity(xt, pred, t)
-        raise ValueError(f"Unsupported output_type {output_type!r} for x0_from.")
-
-    def score_from(self, output_type: str, xt: "Tensor", pred: "Tensor", t: "Tensor") -> "Tensor":
-        if output_type == "score":
-            return pred
-        if output_type == "eps":
-            return self.score_from_eps(xt, pred, t)
-        if output_type == "x0":
-            return self.score_from_x0(xt, pred, t)
+    def x0_from(self, output_type, xt, pred, t):
+        if output_type == "x0": return pred
+        if output_type == "eps": return self.x0_from_eps(xt, pred, t)
+        if output_type == "score": return self.x0_from_score(xt, pred, t)
+        if output_type == "velocity": return self.x0_from_velocity(xt, pred, t)
+        raise ValueError(output_type)
+    def score_from(self, output_type, xt, pred, t):
+        if output_type == "score": return pred
+        if output_type == "eps": return self.score_from_eps(xt, pred, t)
+        if output_type == "x0": return self.score_from_x0(xt, pred, t)
         if output_type == "velocity":
             return self.score_from_x0(xt, self.x0_from_velocity(xt, pred, t), t)
-        raise ValueError(f"Unsupported output_type {output_type!r} for score_from.")
-
-    def eps_from(self, output_type: str, xt: "Tensor", pred: "Tensor", t: "Tensor") -> "Tensor":
-        if output_type == "eps":
-            return pred
+        raise ValueError(output_type)
+    def eps_from(self, output_type, xt, pred, t):
+        if output_type == "eps": return pred
         return self.eps_from_x0(xt, self.x0_from(output_type, xt, pred, t), t)
-
-    def velocity_from(self, output_type: str, xt: "Tensor", pred: "Tensor", t: "Tensor") -> "Tensor":
-        if output_type == "velocity":
-            return pred
+    def velocity_from(self, output_type, xt, pred, t):
+        if output_type == "velocity": return pred
         return self.velocity_from_x0(xt, self.x0_from(output_type, xt, pred, t), t)
+    def regression_target(self, output_type, *, x0, eps, xt, t):
+        if output_type == "eps": return eps
+        if output_type == "x0": return x0
+        if output_type == "score": return self.score_from_eps(xt, eps, t)
+        if output_type == "velocity": return self.velocity_from_x0(xt, x0, t)
+        raise ValueError(output_type)
 
-    # min-SNR-γ cap on the x0-parametrization weight (Hang et al., 2023). Plain SNR weighting on
-    # x0-prediction starves the high-noise gradients and under-learns coarse structure; capping the
-    # SNR at γ rebalances it. ε stays unit-weighted (the reference parametrization), so this leaves
-    # the ε-prediction objective — and its acceptance gate — unchanged.
+class AffineGaussianContinuousSchedule(GaussianContinuousSchedule):
+    """m(x0,t) = α(t)x0, L(t) = σ(t). Only the affine-specific hooks live here."""
+
+    @abstractmethod
+    def alpha(self, t): raise NotImplementedError
+    @abstractmethod
+    def sigma(self, t): raise NotImplementedError
+    @abstractmethod
+    def alpha_dot(self, t): raise NotImplementedError
+    @abstractmethod
+    def sigma_dot(self, t): raise NotImplementedError
+
+    def m(self, x0, t):        return _expand(self.alpha(t), x0) * x0
+    def m_inverse(self, y, t): return y / _expand(self.alpha(t), y)
+    def L(self, t):            return self.sigma(t)
+    def L_inverse(self, y, t): return y / _expand(self.sigma(t), y)
+    def m_dot(self, x0, t):    return _expand(self.alpha_dot(t), x0) * x0
+    def L_dot(self, t):        return self.sigma_dot(t)
+
+    def G(self, t):
+        a, s, ad, sd = self.alpha(t), self.sigma(t), self.alpha_dot(t), self.sigma_dot(t)
+        return torch.sqrt(2 * s**2 * (sd / s - ad / a))
+
+    def x0_from_velocity(self, xt, v, t):
+        a, s, ad, sd = self.alpha(t), self.sigma(t), self.alpha_dot(t), self.sigma_dot(t)
+        a, s, ad, sd = (_expand(c, xt) for c in (a, s, ad, sd))
+        return (v * s - sd * xt) / (ad * s - sd * a)
+
     max_snr_weight: float = 5.0
 
-    def loss_weight(self, output_type: str, t: "Tensor") -> "Tensor":
-        """Per-sample weight that makes the weighted MSE on ``output_type`` comparable to the
-        ε-prediction loss (SNR matching). This is α/σ math, so it lives in the schedule
-        (Invariant 3): a method weights its loss by this and stays output-type-agnostic.
-        eps/velocity → 1; x0 → min((α/σ)², γ); score → σ²."""
+    def loss_weight(self, output_type, t):
         t = torch.as_tensor(t, dtype=torch.float32)
-        if output_type in ("eps", "velocity"):
-            return torch.ones_like(t)
+        if output_type in ("eps", "velocity"): return torch.ones_like(t)
         a, s = self.alpha(t), self.sigma(t)
-        if output_type == "x0":
-            return torch.clamp((a / s) ** 2, max=self.max_snr_weight)
-        if output_type == "score":
-            return s**2
-        raise ValueError(f"Unsupported output_type {output_type!r} for loss_weight.")
-
-    def regression_target(
-        self, output_type: str, *, x0: "Tensor", eps: "Tensor", xt: "Tensor", t: "Tensor"
-    ) -> "Tensor":
-        """The training target a model with ``output_type`` should regress to, given the clean
-        sample ``x0`` and the noise ``eps`` realized in ``xt``. (Output-type math stays here.)"""
-        if output_type == "eps":
-            return eps
-        if output_type == "x0":
-            return x0
-        if output_type == "score":
-            return self.score_from_eps(xt, eps, t)
-        if output_type == "velocity":
-            return self.velocity_from_x0(xt, x0, t)
-        raise ValueError(f"Unsupported output_type {output_type!r} for regression_target.")
-
-
+        if output_type == "x0": return torch.clamp((a / s) ** 2, max=self.max_snr_weight)
+        if output_type == "score": return s**2
+        raise ValueError(output_type)
+    
 class DiscreteSchedule(Schedule):
     """Discrete (CTMC / D3PM) schedule. Discrete is always x0-prediction."""
 
@@ -216,7 +192,7 @@ class DiscreteSchedule(Schedule):
     ) -> "Tensor":
         """q(x_s | x_t) = Σ_{x0} q(x_s | x_t, x0) p_θ(x0 | x_t)."""
         raise NotImplementedError
-
+##--------------------------------------
 
 # ── model.py ──────────────────────────────────────────────────────────────────────────────────
 class Model(nn.Module, ABC):
@@ -229,13 +205,27 @@ class Model(nn.Module, ABC):
         raise NotImplementedError
 
 
+# ── criterion.py ──────────────────────────────────────────────────────────────────────────────
+class Criterion(ABC):
+    """A discrepancy measure between a model prediction and its regression target — the per-sample
+    penalty (MSE, Huber, ...) a `Method` reduces to a scalar loss. Optional dependency injected at
+    build (Invariant 4); a method with no configured criterion keeps its own built-in loss."""
+
+    @abstractmethod
+    def __call__(
+        self, pred: "Tensor", target: "Tensor", weight: "Optional[Tensor]" = None
+    ) -> "Tensor":
+        raise NotImplementedError
+
+
 # ── method.py ─────────────────────────────────────────────────────────────────────────────────
 class Method(ABC):
     """A training objective. Deps injected at build (Invariant 4)."""
 
-    def __init__(self, schedule: Schedule, space: Space):
+    def __init__(self, schedule: Schedule, space: Space, criterion: "Optional[Criterion]" = None):
         self.schedule = schedule
         self.space = space
+        self.criterion = criterion
 
     @abstractmethod
     def loss(self, model: Model, x0: "Tensor", cond=None, generator: "Optional[Generator]" = None) -> "Tensor":
@@ -247,12 +237,17 @@ class Sampler(ABC):
     """Reverse-process integrator. Output-type-agnostic; calls schedule conversions (Invariant 3).
     Applies `control.modify(...)` when control is present (Invariant 6)."""
 
-    def __init__(self, model: Model, schedule: Schedule, space: Space, control: "Optional[Controller]" = None):
+    def __init__(self, model, schedule, space, control=None, discretization: "Discretization" = UniformDiscretization()):
         self.model = model
         self.schedule = schedule
         self.space = space
         self.control = control
+        self.discretization = discretization
         self._generator: "Optional[Generator]" = None  # set during sample(); read by stochastic steps
+        # Per-sample scratch a controller may read/write across steps (e.g. accumulate a running
+        # statistic). Reset at the top of sample(), cleared at the end — single-use-per-call state,
+        # same non-reentrant contract as _generator (do not share one Sampler across concurrent sample() calls).
+        self._context: dict = {}
 
     @abstractmethod
     def step(self, x: "Tensor", t: "Tensor", s: "Tensor", cond=None) -> "Tensor":
@@ -260,7 +255,7 @@ class Sampler(ABC):
         control.modify(...) when control is not None."""
         raise NotImplementedError
 
-    def _apply_control(self, x0_hat: "Tensor", x: "Tensor", t: "Tensor") -> "Tensor":
+    def _apply_control(self, x0_hat: "Tensor", x: "Tensor", t: "Tensor", cond=None, context=None) -> "Tensor":
         """Apply the controller and return the (possibly bent) clean estimate x̂₀, dispatching on the
         controller's SURFACE (Invariant 6). The base model is never modified.
 
@@ -269,14 +264,19 @@ class Sampler(ABC):
             the rate (CBF / MPPI / drift-FBSDE), then convert back to an equivalent x̂₀. The
             conversion is pure α/σ algebra in the schedule, so every drift-controller sees a real b_θ
             regardless of the sampler's internal parameterization.
+
+        ``cond`` (the sampler's conditioning spec) and ``context`` (per-sample scratch; defaults to the
+        sampler's own ``self._context``) are threaded to the controller so it can steer per-conditioning
+        and carry state across steps.
         """
         c = self.control
         if c is None:
             return x0_hat
+        ctx = self._context if context is None else context
         if c.surface == "x0":
-            return c.modify_x0(x0_hat, x, t, self.schedule)
+            return c.modify_x0(x0_hat, x, t, self.schedule, cond, ctx)
         drift = self.schedule.drift_from_x0(x, x0_hat, t)
-        drift = c.modify_drift(drift, x, t, self.schedule)
+        drift = c.modify_drift(drift, x, t, self.schedule, cond, ctx)
         return self.schedule.x0_from_drift(x, drift, t)
 
     def _apply_conditioning(self, x: "Tensor", cond) -> "Tensor":
@@ -292,34 +292,38 @@ class Sampler(ABC):
         pin = Pin.from_cond(cond)
         return pin.project(x) if pin is not None else x
 
-    def sample(
-        self, shape, n_steps: int, cond=None,
-        generator: "Optional[Generator]" = None, return_chain: bool = False,
-    ):
+    def sample(self, shape, n_steps, cond=None, generator=None, return_chain=False):
         """Framework owns the loop: prior_sample → walk the discretized grid via `step` → return.
 
         Shared by every sampler; subclasses implement only `step`. (Inverse-transform back to raw
         units is the runner's job, not the sampler's — Invariant 2.)
         """
         from ..utils.torch_utils import model_device
-        from .types import SamplerOutput
+        from ..core.types import SamplerOutput
 
         device = model_device(self.model)
         self._generator = generator
+        self._context = {}                       # A3: fresh per-sample scratch for controllers
         x = self.space.prior_sample(shape, generator=generator, device=device)
-        x = self._apply_conditioning(x, cond)
+        x = self._apply_conditioning(x, cond)    # pre-loop pin (also covers n_steps == 0)
         # Time grid stays on CPU: its scalars are 0-dim and re-homed by each consumer (models re-home
         # t; `expand_like` re-homes schedule coeffs), so per-step `float(s)` terminal checks don't
         # force a device→host sync on the GPU sampling path.
-        grid = self.schedule.discretize(n_steps)
+        grid = self.discretization.grid(self.schedule, n_steps) 
 
         chain = [x.clone()] if return_chain else None
         with torch.no_grad():
             for i in range(n_steps):
                 x = self.step(x, grid[i], grid[i + 1], cond)
+                # A4 defense-in-depth: pins must hold after EVERY reverse step. Continuous `step`s
+                # already end with their own `_apply_conditioning` (pins win there), so this is
+                # idempotent for them; it also guarantees the pin for any sampler whose `step` doesn't
+                # self-pin. NOT a duplicate call — keep both (deleting either can silently drop a pin).
+                x = self._apply_conditioning(x, cond)
                 if return_chain:
                     chain.append(x.clone())
         self._generator = None
+        self._context = {}
         return SamplerOutput(
             samples=x, chain=torch.stack(chain, dim=0) if return_chain else None
         )
@@ -330,7 +334,7 @@ class Cost(ABC):
     """WHAT you tilt toward. `log_h` is the tilt's log-density."""
 
     @abstractmethod
-    def log_h(self, x: "Tensor", t: "Tensor") -> "Tensor":
+    def log_h(self, x: "Tensor", t: "Tensor", cond=None) -> "Tensor":
         raise NotImplementedError
 
     def to_normalized(self, preprocessor: "Preprocessor") -> "Cost":
@@ -371,21 +375,38 @@ class Controller(ABC):
         else:
             self.cost = self._raw_cost
 
-    def modify_drift(self, drift: "Tensor", x: "Tensor", t: "Tensor", schedule: Schedule) -> "Tensor":
+    def modify_drift(
+        self, drift: "Tensor", x: "Tensor", t: "Tensor", schedule: Schedule, cond=None, context=None
+    ) -> "Tensor":
         """GENERAL surface (``surface == "drift"``). Filter / correct the reverse drift b_θ (e.g. a
-        CBF QP, an MPPI reweighting). Reads the rate ẋ; not faithfully expressible on x̂₀."""
+        CBF QP, an MPPI reweighting). Reads the rate ẋ; not faithfully expressible on x̂₀.
+
+        ``cond`` is the sampler's conditioning spec (steer per-conditioning); ``context`` is the
+        sampler's per-sample mutable scratch dict (carry state across reverse steps). Both are optional
+        — a controller that needs neither ignores them."""
         raise NotImplementedError
 
-    def modify_x0(self, x0_hat: "Tensor", x: "Tensor", t: "Tensor", schedule: Schedule) -> "Tensor":
+    def modify_x0(
+        self, x0_hat: "Tensor", x: "Tensor", t: "Tensor", schedule: Schedule, cond=None, context=None
+    ) -> "Tensor":
         """SPECIALIZATION (``surface == "x0"``). Return a shifted clean estimate x̂₀; the sampler
-        converts it to an equivalent drift correction via the schedule when needed."""
+        converts it to an equivalent drift correction via the schedule when needed. ``cond`` /
+        ``context`` as in :meth:`modify_drift`."""
         raise NotImplementedError
+
+    def modify_variance(self, sigma, x, t, schedule, cond=None, context=None):
+        """Optional: scale/shift the reverse-step noise scale (a sampling-temperature knob). Default:
+        identity. Called by stochastic samplers (ancestral / DDPM-style) immediately before building
+        the next noise term — a concrete stochastic ``Sampler.step()`` may call
+        ``self.control.modify_variance(...)`` directly, guarding for ``self.control is None``.
+        Deterministic samplers (DDIM η=0, PF-ODE) have no noise term and never call this. ``context``
+        mirrors the other hooks so a history-dependent temperature needs no later signature change."""
+        return sigma
 
 
 # ── preprocessor.py ───────────────────────────────────────────────────────────────────────────
 class Preprocessor(ABC):
     """The membrane. Fitted once, applied at train + sampling-init, inverted at output.
-
     Touches ONLY the generated quantity, never the conditioning (Invariant 9). Everything inside
     the membrane is normalized (Invariant 2). Stats travel in the checkpoint (Invariant 5).
     """

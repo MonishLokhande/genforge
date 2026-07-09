@@ -82,6 +82,12 @@ class _D3PM(DiscreteSchedule):
         pi = self.stationary()
         return beta * torch.eye(V) + (1.0 - beta) * pi.unsqueeze(0).expand(V, V)
 
+    def marginal(self, x0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """q(x_t | x_0) — the discrete analogue of the Gaussian (mean, std): the categorical marginal
+        as class probs ``(..., V)``. The discrete space samples it via `qt_probs`, so this is the same
+        object; it exists to satisfy the `Schedule.marginal` contract."""
+        return self.qt_probs(x0, t)
+
     def qt_probs(self, x0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """q(x_t = · | x_0) for each position: ``(..., V)``. Per-sample t supported."""
         V = self.num_classes

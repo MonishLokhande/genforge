@@ -1,0 +1,84 @@
+site_name: genforge
+site_description: Unified PyTorch framework for generative modeling with a clean control layer
+site_author: Monish Lokhande
+repo_url: https://github.com/MonishLokhande/genforge   # icon links here; the text label is hidden via extra.css
+copyright: Copyright &copy; 2026 Monish Lokhande
+docs_dir: docs
+# Internal working docs (plans/specs) live under docs/ but are intentionally NOT in the
+# published nav; declare them here so mkdocs doesn't warn about docs-dir files missing from the nav.
+not_in_nav: |
+  **/plans/**
+  **/specs/**
+
+theme:
+  name: material
+  favicon: assets/favicon.svg               # same chart-bell-curve mark as the header logo
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/chart-bell-curve          # a distributions/diffusion-flavored brand mark
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: deep purple
+      toggle: {icon: material/weather-night, name: Switch to dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep purple
+      toggle: {icon: material/weather-sunny, name: Switch to light mode}
+  features:
+    - navigation.sections       # full nav menu in the LEFT sidebar (sticky + independently scrollable)
+    - navigation.expand         # sections expanded so the whole menu is visible/scrollable
+    - navigation.top            # back-to-top button
+    - navigation.tracking       # URL tracks the anchor you're reading
+    - navigation.instant        # SPA-style page loads (math re-typesets via mathjax.js)
+    - navigation.instant.progress
+    - navigation.footer         # prev/next links
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tooltips
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.arithmatex:
+      generic: true
+  - toc: {permalink: true}
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/MonishLokhande/genforge
+      name: genforge on GitHub
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Architecture: architecture.md
+  - Experiments: experiments.md
+  - Extending: extending.md

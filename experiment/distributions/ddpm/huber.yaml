@@ -1,9 +1,10 @@
 # @package _global_
 # Worked example: the exact DDPM recipe, but with a Huber loss instead of MSE.
-# The ONLY change is the method — schedule, model, sampler, runner are all inherited unchanged.
+# The ONLY change is the criterion — method/schedule/model/sampler/runner are all inherited unchanged.
+# (Huber is no longer a bespoke method: DDPM reduces through the injected `criterion`.)
 defaults:
   - /experiment/distributions/ddpm/base
-  - override /method: ddpm_huber
+  - /criterion: huber
   - _self_
 
 runner:

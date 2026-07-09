@@ -20,7 +20,7 @@ from ..core.registry import register
 class Projection(Controller):
     surface = "x0"
 
-    def modify_x0(self, x0_hat: torch.Tensor, x: torch.Tensor, t, schedule) -> torch.Tensor:
+    def modify_x0(self, x0_hat: torch.Tensor, x: torch.Tensor, t, schedule, cond=None, context=None) -> torch.Tensor:
         return self.cost.project(x0_hat)
 
 

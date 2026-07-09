@@ -49,7 +49,7 @@ class InterpolantSampler(Sampler):
         else:
             # Bend the clean estimate (Invariant 6), then re-derive BOTH fields consistent with it.
             x0 = self.schedule.x0_from(self.model.output_type, x, pred, t)
-            x0 = self._apply_control(x0, x, t)
+            x0 = self._apply_control(x0, x, t, cond)
             b = self.schedule.velocity_from_x0(x, x0, t)
             score = self.schedule.score_from_x0(x, x0, t)
 

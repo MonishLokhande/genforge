@@ -27,7 +27,7 @@ class CBF(Controller):
         super().__init__(cost)
         self.alpha = float(alpha)
 
-    def modify_drift(self, drift: torch.Tensor, x: torch.Tensor, t, schedule) -> torch.Tensor:
+    def modify_drift(self, drift: torch.Tensor, x: torch.Tensor, t, schedule, cond=None, context=None) -> torch.Tensor:
         grad = self.cost.grad_h(x)                              # ∇h(x), (..., dim)
         h = self.cost.value(x)                                 # h(x),   (...,)
         slack = (grad * drift).sum(dim=-1) + self.alpha * h    # ḣ + α·h ≥ 0 required

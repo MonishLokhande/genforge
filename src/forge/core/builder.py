@@ -1,7 +1,7 @@
 """The builder — reads a config and wires components in dependency order, returning a Runner.
 
 Build order:
-    space → schedule → model → method → cost → control → sampler
+    space → schedule → criterion → model → method → cost → control → sampler
           → environment → dataset → preprocessor → visualizer → runner
 
 Dependencies are injected at construction (Invariant 4): each component is instantiated with its
@@ -25,6 +25,7 @@ from .resolvers import register_resolvers
 BUILD_ORDER: tuple[str, ...] = (
     "space",
     "schedule",
+    "criterion",
     "model",
     "method",
     "cost",
@@ -48,6 +49,7 @@ _BUILTIN_MODULES: tuple[str, ...] = (
     "forge.spaces.euclidean",
     "forge.schedules.vp",
     "forge.models.mlp",
+    "forge.methods.criterion",
     "forge.methods.ddpm",
     "forge.samplers.ddpm",
     "forge.runners.training",
@@ -58,7 +60,6 @@ _BUILTIN_MODULES: tuple[str, ...] = (
     "forge.schedules.flow",
     "forge.methods.flow_matching",
     "forge.methods.ot_cfm",
-    "forge.methods.ddpm_huber",
     "forge.samplers.flow",
     "forge.samplers.interpolant",
     "forge.samplers.ddim",

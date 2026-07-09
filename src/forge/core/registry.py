@@ -18,6 +18,7 @@ from typing import Callable, TypeVar
 CATEGORIES: tuple[str, ...] = (
     "space",
     "schedule",
+    "criterion",
     "model",
     "method",
     "cost",

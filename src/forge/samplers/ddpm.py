@@ -31,7 +31,7 @@ class DDPMSampler(Sampler):
     def step(self, x: torch.Tensor, t, s, cond=None) -> torch.Tensor:
         pred = self.model(x, t, cond)
         x0_hat = self.schedule.x0_from(self.model.output_type, x, pred, t)
-        x0_hat = self._apply_control(x0_hat, x, t)   # control bends the clean estimate (Invariant 6)
+        x0_hat = self._apply_control(x0_hat, x, t, cond)   # control bends the clean estimate (Invariant 6)
         if self.clip_denoised:
             x0_hat = x0_hat.clamp(-1.0, 1.0)         # bounded data range; tames the α→0 ε-blowup
 
@@ -49,8 +49,13 @@ class DDPMSampler(Sampler):
         var = beta_step * (s_s**2) * inv_var_t
 
         if float(s) > 0.0:
+            std = torch.sqrt(torch.clamp(var, min=0.0))
+            if self.control is not None:
+                # Optional temperature knob (Invariant 6): a controller may scale/shift the noise std.
+                # Default modify_variance is identity, so this is a no-op unless a controller overrides it.
+                std = self.control.modify_variance(std, x, t, self.schedule, cond, self._context)
             noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=self._generator)
-            x_s = mean + torch.sqrt(torch.clamp(var, min=0.0)) * noise
+            x_s = mean + std * noise
         else:
             x_s = mean  # final step (s = 0): the posterior collapses to x̂_0
         return self._apply_conditioning(x_s, cond)

@@ -22,7 +22,7 @@ class Guidance(Controller):
         self.scale = float(scale)
         self.sigma_weight = bool(sigma_weight)
 
-    def modify_x0(self, x0_hat: torch.Tensor, x: torch.Tensor, t, schedule) -> torch.Tensor:
+    def modify_x0(self, x0_hat: torch.Tensor, x: torch.Tensor, t, schedule, cond=None, context=None) -> torch.Tensor:
         with torch.enable_grad():
             z = x0_hat.detach().requires_grad_(True)
             lh = self.cost.log_h(z, t).sum()

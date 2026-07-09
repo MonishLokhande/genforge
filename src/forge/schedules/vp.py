@@ -7,8 +7,8 @@ Continuous-time VP-SDE with:
 The marginal is ``q(x_t | x_0) = N(α(t) x_0, σ(t)² I)`` with the variance-preserving identity
 ``α(t)² + σ(t)² = 1``. DDPM is the time-discretization of this SDE.
 
-The α/σ output-type conversion math lives in the ``ContinuousSchedule`` base (Invariant 3);
-``VPLinear`` supplies β/α/σ/G, and ``VPCosine`` subclasses it, overriding only α/σ/G.
+The α/σ output-type conversion math lives in the ``AffineGaussianContinuousSchedule`` base
+(Invariant 3); ``VPLinear`` supplies β/α/σ/α̇/σ̇/G, and ``VPCosine`` subclasses it, overriding α/α̇/G.
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ import math
 
 import torch
 
-from ..core.interfaces import ContinuousSchedule
+from ..core.interfaces import AffineGaussianContinuousSchedule
 from ..core.registry import register
 from ..utils.torch_utils import expand_like as _expand
 
 
 @register("schedule", "vp_linear")
-class VPLinear(ContinuousSchedule):
+class VPLinear(AffineGaussianContinuousSchedule):
     def __init__(self, beta_min: float = 0.1, beta_max: float = 20.0):
         self.beta_min = float(beta_min)
         self.beta_max = float(beta_max)
@@ -43,6 +43,17 @@ class VPLinear(ContinuousSchedule):
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
         a = self.alpha(t)
         return torch.sqrt(torch.clamp(1.0 - a**2, min=1e-20))
+
+    def alpha_dot(self, t: torch.Tensor) -> torch.Tensor:
+        # α(t) = exp(−½∫β)  ⟹  α̇(t) = −½ β(t) α(t).
+        t = torch.as_tensor(t, dtype=torch.float32)
+        return -0.5 * self.beta(t) * self.alpha(t)
+
+    def sigma_dot(self, t: torch.Tensor) -> torch.Tensor:
+        # VP identity σ = √(1−α²)  ⟹  σ̇ = −α α̇ / σ. Uses only α/α̇/σ (no β), so VPCosine —
+        # which has no closed-form β — inherits this unchanged.
+        a, ad, s = self.alpha(t), self.alpha_dot(t), self.sigma(t)
+        return -a * ad / s
 
     def G(self, t: torch.Tensor) -> torch.Tensor:
         """Forward-SDE diffusion coefficient G_t = sqrt(β(t))."""
@@ -93,6 +104,15 @@ class VPCosine(VPLinear):
         # ᾱ(t) = f(t)/f(0), clamped to [0, 1]
         a_bar = (self._f(t) / self._f0).clamp(max=1.0)
         return a_bar.sqrt() if self.parameterization == "sqrt_alpha_bar" else a_bar
+
+    def alpha_dot(self, t: torch.Tensor) -> torch.Tensor:
+        # No closed-form β for the cosine curve — finite-difference α̇ (same approach as G below).
+        # σ̇ is inherited from VPLinear (it needs only α/α̇/σ). σ inherits from VPLinear too.
+        t = torch.as_tensor(t, dtype=torch.float32)
+        dt = 1e-5
+        t1 = (t + dt).clamp(max=1.0)
+        t0 = (t - dt).clamp(min=0.0)
+        return (self.alpha(t1) - self.alpha(t0)) / (t1 - t0).clamp(min=dt)
 
     def G(self, t: torch.Tensor) -> torch.Tensor:
         """VP diffusion coefficient G(t) = sqrt(β(t)) where β(t) = -2 α'(t)/α(t).

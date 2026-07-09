@@ -22,16 +22,16 @@ class FlowSampler(Sampler):
             raise ValueError(f"Unknown integrator {integrator!r} (euler|heun|midpoint).")
         self.integrator = integrator
 
-    def _velocity(self, x: torch.Tensor, t) -> torch.Tensor:
+    def _velocity(self, x: torch.Tensor, t, cond=None) -> torch.Tensor:
         # NOTE: with a velocity-output model (the flow default) this is exact everywhere. A non-
         # velocity model routes through velocity_from_x0, which divides by σ(t); on a flow schedule
         # σ(1)=0, so prefer a velocity model when integrating to the data endpoint t=1.
-        pred = self.model(x, t)
+        pred = self.model(x, t, cond)
         v = self.schedule.velocity_from(self.model.output_type, x, pred, t)
         if self.control is not None:
             # Bend the clean estimate, then re-derive the velocity consistent with it (Invariant 6).
             x0 = self.schedule.x0_from(self.model.output_type, x, pred, t)
-            x0 = self._apply_control(x0, x, t)
+            x0 = self._apply_control(x0, x, t, cond)
             v = self.schedule.velocity_from_x0(x, x0, t)
         return v
 
@@ -40,16 +40,16 @@ class FlowSampler(Sampler):
         s = torch.as_tensor(s)
         dt = (s - t)
         if self.integrator == "euler":
-            x_s = x + dt * self._velocity(x, t)
+            x_s = x + dt * self._velocity(x, t, cond)
         elif self.integrator == "midpoint":
-            v1 = self._velocity(x, t)
+            v1 = self._velocity(x, t, cond)
             xm = x + 0.5 * dt * v1
-            vm = self._velocity(xm, t + 0.5 * dt)
+            vm = self._velocity(xm, t + 0.5 * dt, cond)
             x_s = x + dt * vm
         else:
             # heun (explicit trapezoid): predictor at t, corrector at s
-            v1 = self._velocity(x, t)
+            v1 = self._velocity(x, t, cond)
             xe = x + dt * v1
-            v2 = self._velocity(xe, s)
+            v2 = self._velocity(xe, s, cond)
             x_s = x + 0.5 * dt * (v1 + v2)
         return self._apply_conditioning(x_s, cond)

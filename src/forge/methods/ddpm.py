@@ -15,12 +15,16 @@ import torch
 
 from ..core.interfaces import Method, Model
 from ..core.registry import register
+from .criterion import MSECriterion
 
 
 @register("method", "ddpm")
 class DDPM(Method):
-    def __init__(self, schedule, space, t_eps: float = 1e-3):
-        super().__init__(schedule, space)
+    """DDPM regression. The per-element penalty is a swappable `criterion` (default MSE); inject
+    ``criterion=huber`` for the smooth-L1 objective that used to be the bespoke ``ddpm_huber``."""
+
+    def __init__(self, schedule, space, t_eps: float = 1e-3, criterion=None):
+        super().__init__(schedule, space, criterion=criterion or MSECriterion())
         self.t_eps = float(t_eps)
 
     def loss(
@@ -38,6 +42,8 @@ class DDPM(Method):
         eps = self.schedule.eps_from_x0(xt, x0, t)
         target = self.schedule.regression_target(model.output_type, x0=x0, eps=eps, xt=xt, t=t)
         pred = model(xt, t, cond)
-        # SNR weighting (from the schedule) makes the objective equivalent for any output_type.
-        w = self.schedule.loss_weight(model.output_type, t).reshape(-1, *([1] * (x0.ndim - 1)))
-        return torch.mean(w * (pred - target) ** 2)
+        # SNR weighting (from the schedule) makes the objective equivalent for any output_type. It's a
+        # per-sample weight; the criterion reduces over the feature dims and applies it, so this equals
+        # the old `mean(w_broadcast * (pred - target)**2)` for MSE and its Huber analogue for `huber`.
+        w = self.schedule.loss_weight(model.output_type, t)
+        return self.criterion(pred, target, weight=w)

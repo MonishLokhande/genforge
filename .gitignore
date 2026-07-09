@@ -24,8 +24,5 @@ outputs/
 wandb/
 data/
 
-# Docs source (not shipped to the public repo — safety net; the sync manifest already omits it)
-docs/
-
-# MkDocs build
+# MkDocs build (docs/ source IS shipped; the built site deploys via `mkdocs gh-deploy`)
 site/

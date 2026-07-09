@@ -61,7 +61,7 @@ class AmortizedValueController(Controller):
             p.requires_grad_(False)
         self._value = model
 
-    def modify_x0(self, x0_hat: torch.Tensor, x: torch.Tensor, t, schedule) -> torch.Tensor:
+    def modify_x0(self, x0_hat: torch.Tensor, x: torch.Tensor, t, schedule, cond=None, context=None) -> torch.Tensor:
         self._load()
         with torch.enable_grad():
             z = x0_hat.detach().requires_grad_(True)
