@@ -18,7 +18,16 @@ from __future__ import annotations
 
 import importlib
 import sys
+import warnings
+from importlib.metadata import entry_points
 from typing import Iterable
+
+# Standard-Python plugin group: any installed package can advertise forge components by declaring
+#   [project.entry-points."forge.plugins"]
+#   <name> = "<module_to_import>"
+# in its pyproject. Discovery imports each such module (firing its @register decorators) so it
+# appears in `forge list` and is usable at train/sample time — no edit to forge required.
+FORGE_PLUGIN_GROUP = "forge.plugins"
 
 # The bundled env packages (the one place that enumerates what ships in ``envs/``). ``envs.common``
 # holds the generic, env-agnostic ``distribution`` dataset shared across the sampling families.
@@ -67,3 +76,21 @@ def load_bundled_envs() -> None:
             importlib.import_module(module)
         except ModuleNotFoundError:
             continue
+
+
+def load_entrypoint_plugins() -> None:
+    """Discover and import every installed package that advertises a ``forge.plugins`` entry point.
+
+    This is the standard Python plugin mechanism (as used by pytest/flake8): forge doesn't scan or
+    import arbitrary packages — a package opts in by declaring the entry point, and loading it fires
+    the package's ``@register`` decorators. Called from ``import_builtin_components`` so it runs on
+    every path (``forge list``, ``train``, ``sample``). A plugin that fails to import is warned and
+    skipped: one broken third-party package must not break discovery for the rest."""
+    for ep in entry_points(group=FORGE_PLUGIN_GROUP):
+        try:
+            ep.load()  # importing the referenced module is what fires its @register decorators
+        except Exception as exc:  # noqa: BLE001 — isolate one bad plugin from the rest
+            warnings.warn(
+                f"forge: skipping plugin entry point {ep.name!r}: {type(exc).__name__}: {exc}",
+                stacklevel=2,
+            )

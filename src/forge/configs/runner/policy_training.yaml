@@ -7,3 +7,4 @@ params:
   n_sample_steps: 100
   device: cuda
   seed: 0
+  amp: false          # bf16 autocast on loss + sampling (no grad scaler needed)

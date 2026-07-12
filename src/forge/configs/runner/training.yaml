@@ -9,6 +9,7 @@ params:
   eval_radius: 0.6
   device: cpu
   seed: 0
+  amp: false          # bf16 autocast on loss + sampling (no grad scaler needed); CUDA and CPU
   # Optional experiment logging — needs the `logging` extra (pip install genforge[logging]).
   # Absent/false => no-op logger + plain loop; a default run is unchanged. Any runner accepts
   # these via CLI too, e.g. runner.params.log.wandb=true (or env FORGE_WANDB=1).

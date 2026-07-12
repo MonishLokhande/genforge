@@ -105,13 +105,20 @@ class ConfigurationError(Exception):
 
 
 def import_builtin_components() -> None:
-    """Import built-in component modules so registration side effects run."""
+    """Import built-in component modules (and installed entry-point plugins) so registration side
+    effects run. Called on every path (`forge list`, train, sample), so third-party plugins
+    discovered here are visible everywhere the built-ins are."""
     for module in _BUILTIN_MODULES:
         try:
             importlib.import_module(module)
         except ModuleNotFoundError:
             # Tolerated: a built-in listed for a future phase may not exist yet.
             continue
+    # Third-party plugins installed in the environment, opt-in via the ``forge.plugins`` entry
+    # point (standard Python plugin discovery — see core/plugins.load_entrypoint_plugins).
+    from .plugins import load_entrypoint_plugins
+
+    load_entrypoint_plugins()
     # Register custom OmegaConf resolvers (add/sub/mul, ...) eagerly so ${mul:}/${sub:}
     # interpolations resolve during plain `compose`, not only inside build(). Idempotent.
     register_resolvers()

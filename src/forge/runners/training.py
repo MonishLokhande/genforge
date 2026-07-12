@@ -66,6 +66,7 @@ class TrainingRunner(Runner):
         seed: int = 0,
         sample_seed: int = 12345,
         deterministic: bool = False,
+        amp: bool = False,                  # bf16 autocast on loss + sampling; bf16 → no GradScaler
         log_every: int = 200,
         ckpt_path: Optional[str] = None,
         warm_start: Optional[str] = None,   # weights-only load from a .pt, fresh optimizer (≠ resume)
@@ -98,6 +99,7 @@ class TrainingRunner(Runner):
         self.seed = seed
         self.sample_seed = sample_seed
         self.deterministic = deterministic
+        self.amp = amp
         self.log_every = log_every
         self.ckpt_path = ckpt_path
         self.warm_start = warm_start
@@ -250,7 +252,8 @@ class TrainingRunner(Runner):
             cond = batch.cond
             if torch.is_tensor(cond):
                 cond = cond.to(device)
-            loss = self.method.loss(self.model, x0, cond=cond, generator=noise_gen)
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.amp):
+                loss = self.method.loss(self.model, x0, cond=cond, generator=noise_gen)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             if self.grad_clip:
@@ -294,7 +297,8 @@ class TrainingRunner(Runner):
         n = n or self.n_eval_samples
         gen = make_generator(self.sample_seed, device)
         shape = (n, *self.dataset.sample_shape)
-        out = self.sampler.sample(shape, self.n_sample_steps, cond=cond, generator=gen)
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.amp):
+            out = self.sampler.sample(shape, self.n_sample_steps, cond=cond, generator=gen)
         x = out.samples
         if self.preprocessor is not None:
             x = self.preprocessor.inverse(x)

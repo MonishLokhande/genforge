@@ -83,3 +83,30 @@ experiment's `plugins:` list (so its `@register` decorators fire) before constru
 no `plugins:` declared, it falls back to importing every bundled env. The loader (`core/plugins.py`)
 puts the repo root on `sys.path` first, since the repo-root `envs/` tree is not part of the installed
 `genforge` package.
+
+## Installable plugins (out-of-tree packages)
+
+To ship components in a **separate pip-installable package** — not a folder in this repo — advertise
+them with a `forge.plugins` entry point. Any such package installed in the environment is discovered
+automatically: it appears in `forge list` and is usable at train/sample time **without** a `plugins:`
+line and **without editing genforge**.
+
+```toml
+# your package's pyproject.toml
+[project.entry-points."forge.plugins"]
+my_forge_ext = "my_forge_ext"   # value = a module to import; importing it fires your @register calls
+```
+
+```python
+# my_forge_ext/__init__.py
+from forge.core.registry import register
+
+@register("schedule", "my_schedule")
+class MySchedule(...):
+    ...
+```
+
+`pip install my-forge-ext` → `forge list` now shows `my_schedule`. Discovery uses the standard
+Python entry-point mechanism (as pytest/flake8 do); genforge never imports arbitrary installed
+packages — a package only participates by declaring the entry point. A plugin that fails to import
+is warned about and skipped, so one broken package can't break discovery for the rest.

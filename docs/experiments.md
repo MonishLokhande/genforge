@@ -78,7 +78,7 @@ A continuous trajectory diffuser for sequential planning.
 
 ---
 
-## 2. Logging
+## 2. Logging & performance
 
 Logging is off by default and its dependencies are optional:
 
@@ -98,6 +98,16 @@ uv run --extra logging forge train experiment=distributions/ddpm/base \
   runner.params.log.wandb=true \
   runner.params.log.project=genforge_benchmarks \
   runner.params.log.progress=true
+```
+
+### Mixed precision
+
+`runner.params.amp=true` runs the training loss and sampling under bf16 autocast. Optimizer
+state, EMA, and the schedule's coefficient algebra stay fp32, and bf16 needs no gradient
+scaler — checkpoint format and resume are unchanged. Works on both CUDA and CPU:
+
+```bash
+uv run forge train experiment=distributions/ddpm/base runner.params.amp=true
 ```
 
 ---
