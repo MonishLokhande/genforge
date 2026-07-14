@@ -60,6 +60,7 @@ class MLP(Model):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+        self._check_cond(cond)
         t = torch.as_tensor(t, device=x.device)
         if t.ndim == 0:
             t = t.expand(x.shape[0])

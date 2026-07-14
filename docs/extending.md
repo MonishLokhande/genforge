@@ -39,6 +39,39 @@ builder injects `schedule`/`space` automatically if your `__init__` names them.
 - **as a plugin:** keep the file in your own package, declare `plugins: [your_pkg.models]` in the
   experiment, and select `model: {name: mynet, params: {...}}`. No fork of forge.
 
+## Adding a metric
+
+A metric implements the `Metric` contract — `__call__(samples, held_out) -> {name: float}` — and
+declares the components it needs by name in `__init__`; the builder injects them. Sample-driven
+metrics score the generated `samples` (raw units) against a reference; data-driven metrics score the
+`held_out` batch (normalized) through the model (needs `runner.params.val_frac>0`).
+
+```python
+import torch
+from forge.core.interfaces import Metric
+from forge.core.registry import register
+
+@register("metric", "mean_gap")
+class MeanGap(Metric):
+    def __init__(self, environment=None, model=None, method=None, dataset=None, schedule=None, scale: float = 1.0):
+        super().__init__(environment, model, method, dataset, schedule)
+        self.scale = scale
+
+    def __call__(self, samples=None, held_out=None) -> dict:
+        ref = self.environment.sample(len(samples))       # a reference draw of true samples
+        return {"mean_gap": self.scale * float((samples.mean(0) - ref.mean(0)).norm())}
+```
+
+Injection is not limited to the ABC's defaults — name **any** already-built component in `__init__`
+(`environment`, `model`, `method`, `schedule`, `dataset`, even `preprocessor`) and the builder wires
+it. A metric that cannot run on the given config should **raise**, not return `{}` — a metric a user
+asked for must not silently vanish from `metrics.json`.
+
+- **in-tree:** drop it in `src/forge/metrics/`, add it to `_BUILTIN_MODULES`, add a
+  `src/forge/configs/metric/mean_gap.yaml` leaf; bundle several with `metric_set`.
+- **as a plugin:** keep it in your own module, declare `plugins: [your_pkg.metrics]`, and select
+  `metric: {name: mean_gap, params: {...}}`. Readings land in `metrics.json` — no fork of forge.
+
 ## Adding an environment
 
 Concrete data sources are plugins under `envs/<name>/`:
@@ -75,6 +108,47 @@ environment: { name: mything, params: {...} }
 ```
 
 `forge list` auto-discovers the bundled `envs/*` packages so the full catalog always prints.
+
+### Image observations
+
+Camera frames are **conditioning**, so they never cross the normalization membrane (Invariant 9):
+the membrane touches only the generated quantity `x`, while a vision model owns its own image and
+proprio normalization. Frames stay `uint8` all the way to the model, which does the `/255` — 4x less
+host→device traffic than float32.
+
+An adapter opts in by accepting `image_keys` and yielding an `"images"` entry per episode, shaped
+`(T, n_cam, C, H, W)` uint8; it also exposes `stack_env_images(obs)` for the rollout side. The
+dataset then emits a **dict** `cond` instead of a flat vector:
+
+```python
+cond = {"obs_images":  ...,   # (B, To, n_cam, C, H, W) uint8
+        "obs_history": ...}   # (B, To, proprio_dim)  — rank-3, NOT flattened
+```
+
+`MultiStepWrapper` keeps a parallel frame deque and `PolicyWrapper` builds the same dict at rollout,
+so train-time and rollout-time conditioning are identical by construction. See
+`envs/robotics/robomimic/adapter.py` and the `experiment/robotics/vision/can_image_ddpm` leaf.
+
+!!! warning "A vision policy's `obs_keys` is not the low-dim default"
+    Vision policies drop privileged state (the camera is meant to supply it), so set `obs_keys`
+    explicitly. Inheriting a low-dim default silently changes `proprio_dim` and therefore the
+    model's `cond_dim`.
+
+### Datasets larger than RAM
+
+A dataset that cannot be preloaded publishes `supports_fast_path = False`; the runner then feeds it
+through a `DataLoader` with `runner.params.workers` instead of the default in-RAM index path. The
+dataset never builds a loader itself — it declares a capability and the runner decides.
+
+Two rules make that safe:
+
+- **`batch(idx)` must be a pure function of `idx`.** Batch indices are derived from `(seed, step)`,
+  so a prefetching loader reading ahead cannot desync from the training step and resume stays
+  bit-identical (Invariant 5). Randomness inside `batch()` would come from worker RNG — not a
+  function of `step`, and not checkpointed — and would silently break resume.
+- **Augment in the main process**, via an optional `augment(cond, generator)` on the dataset. The
+  runner calls it with a dedicated, checkpointed generator, so it is the only consumer and cannot
+  drift.
 
 ## How `plugins:` loading works
 

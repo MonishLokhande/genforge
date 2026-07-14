@@ -85,6 +85,7 @@ class TemporalUNet(Model):
         self.out = nn.Sequential(_groupnorm(prev), nn.SiLU(), nn.Conv1d(prev, dim, 3, padding=1))
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+        self._check_cond(cond)
         t = torch.as_tensor(t, device=x.device)
         if t.ndim == 0:
             t = t.expand(x.shape[0])

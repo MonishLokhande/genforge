@@ -1,0 +1,5 @@
+# ENV-SPECIFIC: requires env.means (only gaussian_mixture). Hard-raises otherwise — do NOT add to
+# a shared/generic metric_set, or that set becomes silently gaussian_mixture-only.
+name: mode_coverage
+params:
+  radius: 0.6

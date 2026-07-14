@@ -204,6 +204,23 @@ class Model(nn.Module, ABC):
     def forward(self, x: "Tensor", t: "Tensor", cond=None) -> "Tensor":
         raise NotImplementedError
 
+    def _check_cond(self, cond) -> None:
+        """Shared guard for the ``(x, t, cond)`` contract (§7): a model with no conditioning
+        pathway (``cond_dim`` == 0 or unset) must REJECT a model-conditioning tensor loudly instead
+        of silently dropping it. Every model's ``forward`` calls this first, so the rule and message
+        live in ONE place — a new model can't reintroduce the silent-drop bug.
+
+        Only a *tensor* ``cond`` is model conditioning. The sampler threads its OWN conditioning spec
+        (a dict, ``{"inpaint"/"pin": ...}``) through the same argument to the model; that is
+        sampler-side (handled by ``_apply_conditioning``/``Pin``) and the model legitimately ignores
+        it — so a dict ``cond`` never trips this guard. The complementary 'cond_dim>0 but cond=None'
+        case is model-specific (an unconditional/CFG pass vs. a hard error) and stays in each model."""
+        if torch.is_tensor(cond) and not getattr(self, "cond_dim", 0):
+            raise ValueError(
+                f"{type(self).__name__} has no conditioning pathway (cond_dim=0) but received a "
+                "cond tensor; build it with cond_dim>0 or omit model conditioning."
+            )
+
 
 # ── criterion.py ──────────────────────────────────────────────────────────────────────────────
 class Criterion(ABC):
@@ -429,6 +446,30 @@ class Preprocessor(ABC):
 
     @abstractmethod
     def load_state_dict(self, d: dict) -> None:
+        raise NotImplementedError
+
+
+# ── metric.py ─────────────────────────────────────────────────────────────────────────────────
+class Metric(ABC):
+    """A swappable evaluation metric. Dependencies are injected at build by ``__init__`` name
+    (``environment``/``model``/``method``/``dataset``/``schedule``, Invariant 4), so a metric
+    declares only what it needs. Two families by what they consume:
+      - sample-driven (MMD/W2/energy/mode-coverage): ``samples`` are the generated RAW-unit points,
+        compared against an ``environment.sample(N)`` reference;
+      - data-driven (held-out loss/perplexity): ``held_out`` is a NORMALIZED held-out data batch
+        run through ``model``+``method``.
+    Each call returns a flat ``{name: float}`` dict. A metric that cannot run on the given config
+    must RAISE, never silently return ``{}`` (a user-configured metric must not vanish)."""
+
+    def __init__(self, environment=None, model=None, method=None, dataset=None, schedule=None):
+        self.environment = environment
+        self.model = model
+        self.method = method
+        self.dataset = dataset
+        self.schedule = schedule
+
+    @abstractmethod
+    def __call__(self, samples=None, held_out=None) -> dict:
         raise NotImplementedError
 
 

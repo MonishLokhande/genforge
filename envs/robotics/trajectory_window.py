@@ -40,7 +40,14 @@ class TrajectoryWindowDataset(BaseDataset):
         discount: float = 0.99,
         max_windows: int | None = None,
         n_obs_steps: int | None = None,
+        stream: bool = False,
     ) -> None:
+        # Publish the capability, not the strategy: the runner reads `supports_fast_path` and picks
+        # a batch source. Explicit rather than auto-detected — a magic RAM threshold that silently
+        # selects the ~4.5x-slower loader path is worse than a config line. Flip it when a dataset
+        # genuinely exceeds host RAM (can_ph images are only 0.98 GB, so the default is right).
+        self.stream = bool(stream)
+        self.supports_fast_path = not self.stream
         if horizon <= 0:
             raise ValueError(f"horizon must be > 0, got {horizon}")
         if stride <= 0:
@@ -113,6 +120,9 @@ class TrajectoryWindowDataset(BaseDataset):
         # ── windowing → flat tensors + per-window index/bound tensors ────────────────────────
         flats: list[torch.Tensor] = []
         obs_flats: list[torch.Tensor] = []
+        img_flats: list[torch.Tensor] = []
+        img_eps: list = []              # stream=True: per-episode lazy readers
+        img_bounds: list[int] = []      # stream=True: their global start offsets
         starts: list[int] = []
         lo: list[int] = []
         hi: list[int] = []
@@ -135,6 +145,15 @@ class TrajectoryWindowDataset(BaseDataset):
             flats.append(xep)
             if self.layout == "actions_only":
                 obs_flats.append(obs)                       # obs ride alongside as conditioning
+                if "images" in ep:
+                    # Camera frames ride alongside too — a THIRD stream, uint8, never merged into x
+                    # (Inv 9: conditioning) and never materialized per-window (the flat design
+                    # already avoids the N·H frame replication that would blow up here).
+                    if self.stream:
+                        img_eps.append(ep["images"])              # lazy accessor, read per batch
+                        img_bounds.append(ep_global)
+                    else:
+                        img_flats.append(torch.as_tensor(np.asarray(ep["images"]))[:T])
             run += T
 
             # anchor semantics: starts in [-pad_before, T - horizon + pad_after].
@@ -155,6 +174,13 @@ class TrajectoryWindowDataset(BaseDataset):
 
         self.flat = torch.cat(flats, dim=0)                                   # (sumT, x_dim)
         self.flat_obs = torch.cat(obs_flats, dim=0) if obs_flats else None    # (sumT, obs_dim)|None
+        # (sumT, n_cam, C, H, W) uint8 | None. uint8 END-TO-END — the vision encoder does the /255,
+        # so this is 4x smaller than float32 (can_ph: 0.98 GB vs 3.9 GB) and stays RAM-resident.
+        self.flat_images = torch.cat(img_flats, dim=0) if img_flats else None
+        # stream=True: no flat tensor; frames are read per batch from these per-episode readers.
+        self._img_eps = img_eps or None
+        self._img_ep_starts = torch.tensor(img_bounds, dtype=torch.long) if img_eps else None
+        self.has_images = self.flat_images is not None or self._img_eps is not None
         self.window_starts = torch.tensor(starts, dtype=torch.long)
         self.window_lo = torch.tensor(lo, dtype=torch.long)
         self.window_hi = torch.tensor(hi, dtype=torch.long)
@@ -202,15 +228,67 @@ class TrajectoryWindowDataset(BaseDataset):
         obs_win = self.flat_obs.to(g.device)[g[:, :to]]                          # (B, To, obs_dim)
         return obs_win.reshape(g.shape[0], to * self.obs_dim)
 
+    def _vision_cond(self, g: torch.Tensor) -> dict:
+        """Dict cond for image policies: ``{"obs_images", "obs_history"}``.
+
+        ``obs_history`` is RANK-3 ``(B, To, obs_dim)``, NOT the flat ``(B, To*obs_dim)`` vector the
+        lowdim path uses: VisionUNet slices ``[:, :n_obs_steps]`` and concatenates per timestep
+        (``cat([img_feats, proprio], -1).flatten(1)``), so flattening here would give the wrong
+        width AND the wrong interleave order — silently, since both are just numbers.
+
+        Both streams stay RAW (Inv 9): the membrane never sees them; the model's obs_normalizer
+        normalizes proprio and its encoder does the /255. Matches PolicyWrapper at rollout.
+        """
+        to = self.n_obs_steps
+        gi = g[:, :to]
+        images = (
+            self.flat_images.to(g.device)[gi] if self.flat_images is not None
+            else self._read_images(gi)
+        )
+        return {
+            "obs_images": images,                                     # (B,To,n_cam,C,H,W) uint8
+            "obs_history": self.flat_obs.to(g.device)[gi],            # (B,To,obs_dim) rank-3
+        }
+
+    def _read_images(self, gi: torch.Tensor) -> torch.Tensor:
+        """Streaming read of ``(B, To)`` GLOBAL frame indices → ``(B, To, n_cam, C, H, W)`` uint8.
+
+        Global flat index → (episode, local) via `bucketize` over the per-episode start offsets,
+        then one grouped read per episode. Duplicates are expected here — the window gather clamps
+        to episode bounds (edge replication), so the same frame legitimately repeats; the reader
+        de-duplicates for HDF5 and restores order.
+
+        PURE in the indices: no randomness, so a prefetching DataLoader cannot desync from `step`
+        (Invariant 5). Augmentation belongs in the runner's main-process `augment` hook.
+        """
+        flat = gi.reshape(-1).cpu()
+        ep_idx = torch.bucketize(flat, self._img_ep_starts, right=True) - 1
+        local = flat - self._img_ep_starts[ep_idx]
+        out = None
+        for e in ep_idx.unique().tolist():
+            mask = ep_idx == e
+            frames = torch.as_tensor(self._img_eps[e].read(local[mask].numpy()))
+            if out is None:     # allocate once we know n_cam/C/H/W
+                out = torch.empty((flat.numel(), *frames.shape[1:]), dtype=frames.dtype)
+            out[mask] = frames
+        return out.reshape(*gi.shape, *out.shape[1:]).to(gi.device)
+
     def batch(self, idx: torch.Tensor) -> BatchProtocol:
         """BatchProtocol entry point. actions_only attaches obs windows as cond (Inv 9):
         a flat (B, To*obs_dim) obs-history vector when n_obs_steps is set (policy conditioning),
-        else the full (B, H, obs_dim) window. value_targets attaches per-window discounted returns."""
+        else the full (B, H, obs_dim) window. With camera frames present the cond becomes a DICT
+        (see `_vision_cond`). value_targets attaches per-window discounted returns.
+
+        PURE in ``idx`` — no randomness here. Augmentation belongs in the runner's main-process
+        `dataset.augment(cond, generator)` hook: a stochastic batch() would desync any prefetching
+        loader from `step` and silently break bit-exact resume (Invariant 5)."""
         x0 = self.gather(idx)
         cond = None
         if self.layout == "actions_only" and self.flat_obs is not None:
             g = self._gather_idx(idx)
-            if self.n_obs_steps is not None:
+            if self.has_images and self.n_obs_steps is not None:
+                cond = self._vision_cond(g)                                      # dict
+            elif self.n_obs_steps is not None:
                 cond = self._obs_history_cond(g)                                 # (B, To*obs_dim)
             else:
                 cond = self.flat_obs.to(g.device)[g]                             # (B, H, obs_dim)
@@ -220,11 +298,21 @@ class TrajectoryWindowDataset(BaseDataset):
 
     @property
     def cond_fit_tensor(self) -> torch.Tensor | None:
-        """Flattened first-n_obs_steps obs over all windows (num_items, To*obs_dim) — the fit data
-        for the model's ObsNormalizer (Inv 9). None unless actions_only obs-history conditioning
-        is active (the legacy (B,H,obs_dim) cond path has no in-model normalizer to fit)."""
+        """Fit data for the model's in-model obs normalizer (Inv 9). None unless actions_only
+        obs-history conditioning is active (the legacy (B,H,obs_dim) cond path has no in-model
+        normalizer to fit).
+
+        Two shapes, because the two normalizers are different widths:
+          - lowdim  -> (num_items, To*obs_dim): janner's ObsNormalizer is To*obs_dim wide, since
+            its cond IS the flattened history.
+          - vision  -> (sumT, obs_dim): VisionUNet's obs_normalizer is proprio_dim wide and is
+            applied per timestep, so it must be fit per timestep. Every episode frame, counted
+            once — no window double-counting.
+        """
         if self.n_obs_steps is None or self.layout != "actions_only" or self.flat_obs is None:
             return None
+        if self.has_images:
+            return self.flat_obs                                   # (sumT, obs_dim)
         return self._obs_history_cond(self._gather_idx(torch.arange(self.num_items)))
 
     @property

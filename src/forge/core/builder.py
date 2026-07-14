@@ -35,6 +35,7 @@ BUILD_ORDER: tuple[str, ...] = (
     "dataset",
     "preprocessor",
     "visualizer",
+    "metric",
     "runner",
 )
 
@@ -87,6 +88,11 @@ _BUILTIN_MODULES: tuple[str, ...] = (
     "forge.models.temporal_unet_janner",
     "forge.methods.conditional",
     "forge.visualizations.trajectory",
+    "forge.visualizations.scatter",
+    "forge.metrics.distribution",
+    "forge.metrics.coverage",
+    "forge.metrics.likelihood",
+    "forge.metrics.metric_set",
     "forge.runners.planning",
     "forge.runners.policy_training",
     # Phase 6 — amortized control (value / FBSDE), method↔control via checkpoint only.
@@ -144,9 +150,12 @@ def _leaf(cfg: Any, category: str) -> Optional[tuple[str, dict]]:
     return str(name), params
 
 
-def _inject(cls: type, pool: dict[str, Any], params: dict) -> dict:
+def match_init_kwargs(cls: type, pool: dict[str, Any], params: dict) -> dict:
     """Build the kwargs for ``cls``: already-built components whose name matches an ``__init__``
     parameter, overlaid with the explicitly configured ``params`` (config always wins).
+
+    The ONE implementation of dependency-by-name matching (Invariant 4). The builder uses it in the
+    build loop; ``MetricSet`` reuses it to build its children — do not hand-copy this logic.
 
     When the class accepts ``**kwargs`` (forwarding to a parent __init__), also walk the MRO
     so that pool objects matching parent params (e.g. model/method in TrainingRunner) are injected.
@@ -233,7 +242,7 @@ def build(cfg: Any):
             continue
         name, params = leaf
         cls = registry.get(category, name)  # raises a listing KeyError on unknown name
-        kwargs = _inject(cls, pool, params)
+        kwargs = match_init_kwargs(cls, pool, params)
         pool[category] = cls(**kwargs)
 
     if "runner" not in pool:

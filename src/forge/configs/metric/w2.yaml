@@ -1,0 +1,5 @@
+# Exact Wasserstein-2 — needs SciPy (the `flow` extra): uv sync --extra flow.
+# Kept OUT of distribution_set so the 2-D core stays runnable without extras; add it explicitly
+# (e.g. `+metric=w2` or a flow-extra experiment) when scipy is available.
+name: w2
+params: {}   # cap: 2000 (O(n^3) assignment) · ref_seed: 0

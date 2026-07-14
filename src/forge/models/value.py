@@ -29,4 +29,5 @@ class ValueMLP(Model):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor, t: Optional[torch.Tensor] = None, cond=None) -> torch.Tensor:
+        self._check_cond(cond)
         return self.net(x)                                    # (..., 1)

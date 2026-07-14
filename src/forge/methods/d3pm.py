@@ -18,6 +18,7 @@ from ..core.registry import register
 
 @register("method", "d3pm")
 class D3PM(Method):
+    nelbo = True  # loss is a per-token x0-CE (NELBO surrogate) → convertible to bits/perplexity
     def __init__(self, schedule, space, t_eps: float = 1e-3):
         super().__init__(schedule, space)
         self.t_eps = float(t_eps)

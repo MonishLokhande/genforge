@@ -11,6 +11,8 @@ defaults:
   - /method: ddpm
   - /sampler: ddpm
   - /runner: training
+  - /visualizer: scatter
+  - /metric: distribution_set
   - _self_
 
 # Concrete env plugin (loaded by the builder so its @register decorators fire).

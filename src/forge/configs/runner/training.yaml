@@ -7,9 +7,17 @@ params:
   n_sample_steps: 100
   n_eval_samples: 2000
   eval_radius: 0.6
+  val_frac: 0.0        # held-out fraction; 0 = no split (train uses all items; byte-identical)
+  val_every: 0         # steps between held-out val-loss passes (0 = off)
+  eval_every: 0        # steps between full evaluate() sample+metrics (0 = off)
+  save_best: false     # keep <ckpt>.best.pt (+ .best.metrics.json) at the lowest val_loss
   device: cpu
   seed: 0
   amp: false          # bf16 autocast on loss + sampling (no grad scaler needed); CUDA and CPU
+  compile: false      # opt-in torch.compile of the training-forward path; raw model kept for EMA/ckpt
+  workers: 0          # DataLoader workers, used ONLY by datasets that set supports_fast_path=False
+                      # (e.g. an out-of-RAM image dataset). The default in-RAM index path ignores
+                      # this and never builds a loader.
   # Optional experiment logging — needs the `logging` extra (pip install genforge[logging]).
   # Absent/false => no-op logger + plain loop; a default run is unchanged. Any runner accepts
   # these via CLI too, e.g. runner.params.log.wandb=true (or env FORGE_WANDB=1).

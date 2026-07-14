@@ -58,7 +58,7 @@ Enable with `uv sync --extra <name>`; flags can be chained (e.g. `--extra flow -
 
 | Extra | Adds | For |
 | --- | --- | --- |
-| `flow` | `scipy` | Optimal-transport couplings (OT-CFM). |
+| `flow` | `scipy` | Optimal-transport couplings (OT-CFM) and the exact Wasserstein-2 metric. |
 | `text` | `tiktoken`, `datasets` | GPT-2 BPE tokenization and streamed text corpora. |
 | `logging` | `wandb`, `tqdm` | Experiment logging and progress bars. |
 

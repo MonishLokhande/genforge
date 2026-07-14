@@ -28,6 +28,7 @@ CATEGORIES: tuple[str, ...] = (
     "dataset",
     "preprocessor",
     "visualizer",
+    "metric",
     "runner",
 )
 

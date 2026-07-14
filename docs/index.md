@@ -99,13 +99,19 @@ model.
 
 ## Architecture
 
-The framework is a pipeline of orthogonal components; a config fully determines the pipeline:
+The framework is a graph of orthogonal components wired by **dependency injection** — the builder
+constructs each and passes the already-built ones it names into its constructor. A config fully
+determines the graph. Solid = required dependency, dashed = optional (dashed nodes are optional to
+define); everything terminates at the `Runner`.
 
-```text
-Space ──> Schedule ──> Criterion ──> Model ──> Method ──> Cost ──> Control ──> Sampler
-   │
-   └───> Environment ──> Dataset ──> Preprocessor ──> Visualizer ──> Runner
-```
+<div class="gf-fig">
+<div class="gf-summary">
+<div class="gf-row"><span class="gf-tag">Compulsory</span><span class="gf-chip gf-req">space</span><span class="gf-chip gf-req">schedule</span><span class="gf-chip gf-req">model</span><span class="gf-chip gf-req">method</span><span class="gf-chip gf-req">sampler</span><span class="gf-chip gf-req">dataset</span><span class="gf-chip gf-req">runner</span></div>
+<div class="gf-row"><span class="gf-tag">Optional</span><span class="gf-chip gf-opt">criterion</span><span class="gf-chip gf-opt">cost</span><span class="gf-chip gf-opt">control</span><span class="gf-chip gf-opt">environment</span><span class="gf-chip gf-opt">preprocessor</span><span class="gf-chip gf-opt">visualizer</span><span class="gf-chip gf-opt">metric</span></div>
+</div>
+</div>
+
+See [Architecture](architecture.md) for the runtime pipeline and the required-vs-optional table.
 
 | Component | Responsibility |
 | --- | --- |
@@ -118,6 +124,8 @@ Space ──> Schedule ──> Criterion ──> Model ──> Method ──> Co
 | `Cost` | The steering target: potentials, constraints, barriers. |
 | `Control` | The steering mechanism: guidance gradients, projections, safety filters. |
 | `Preprocessor` | The normalization membrane: components inside it see only normalized tensors; raw units exist only at the input/output boundary. |
+| `Metric` | A swappable evaluation metric (distribution distance, held-out likelihood, coverage); results persist to `metrics.json`. Optional. |
+| `Runner` | The experiment lifecycle: train, sample, evaluate, checkpoint. |
 
 ---
 
@@ -161,11 +169,12 @@ Verify the installation and inspect the component registry:
 uv run forge list
 ```
 
-Train and sample a baseline diffusion model:
+Train, sample, and evaluate a baseline diffusion model:
 
 ```bash
 uv run forge train  experiment=distributions/ddpm/base
 uv run forge sample experiment=distributions/ddpm/base
+uv run forge eval   experiment=distributions/ddpm/base   # score + persist samples.npz / metrics.json
 ```
 
 ### Sampling from a checkpoint alone

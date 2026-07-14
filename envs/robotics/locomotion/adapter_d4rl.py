@@ -44,8 +44,10 @@ class D4RLHdf5Adapter:
         self.path = Path(path)
         if not self.path.exists():
             raise FileNotFoundError(
-                f"D4RL buffer not found at {self.path} — fetch it with "
-                "`bash scripts/download_d4rl.sh`")
+                f"D4RL buffer not found at {self.path}. Fetch all locomotion buffers with "
+                f"`bash scripts/download_d4rl.sh`, or download {self.path.name!r} manually from "
+                f"http://rail.eecs.berkeley.edu/datasets/offline_rl/gym_mujoco_v2/ into "
+                f"{self.path.parent}/ .")
 
     def build_env(self):
         import gymnasium

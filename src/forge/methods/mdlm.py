@@ -20,6 +20,7 @@ from ..core.registry import register
 
 @register("method", "mdlm")
 class MDLM(Method):
+    nelbo = True  # loss is the masked continuous-time NELBO → convertible to bits/perplexity
     def __init__(self, schedule, space, t_eps: float = 1e-3):
         super().__init__(schedule, space)
         self.t_eps = float(t_eps)

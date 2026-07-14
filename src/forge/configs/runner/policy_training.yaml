@@ -8,3 +8,5 @@ params:
   device: cuda
   seed: 0
   amp: false          # bf16 autocast on loss + sampling (no grad scaler needed)
+  workers: 0          # DataLoader workers, used ONLY when the dataset sets supports_fast_path=False
+                      # (e.g. an out-of-RAM image dataset). The in-RAM index path never builds one.

@@ -1,0 +1,9 @@
+# Env-agnostic distribution distances — works on ANY 2-D env (uses env.sample as reference).
+# MMD + energy are pure-torch (core, no extras). Deliberately EXCLUDES:
+#   - w2 (needs the flow extra / scipy — keep the 2-D core runnable without extras);
+#   - mode_coverage (hard-raises without env.means — env-specific, see mode_coverage.yaml).
+name: metric_set
+params:
+  metrics:
+    - {name: mmd}
+    - {name: energy}

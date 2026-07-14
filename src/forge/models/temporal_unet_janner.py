@@ -293,6 +293,7 @@ class TemporalUNetJanner(Model):
         Returns:
             (B, H, transition_dim) denoised output.
         """
+        self._check_cond(cond)  # §7: reject cond at a cond_dim=0 instance (the cond_dim>0/None case is below)
         t = torch.as_tensor(t, device=x.device)
         if t.ndim == 0:
             t = t.expand(x.shape[0])

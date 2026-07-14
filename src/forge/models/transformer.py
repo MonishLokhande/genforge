@@ -1,8 +1,8 @@
 """A minimal sequence transformer — the SHARED backbone for the discrete-diffusion LMs.
 
 Token + learned-positional embedding, a stack of bidirectional self-attention blocks (denoising
-sees the whole corrupted sequence, so no causal mask), additive time conditioning, and a per-token
-head over the vocabulary. ONE backbone, parameterized by config; `output_type` is config-selectable
+sees the whole corrupted sequence, so no causal mask), additive time (and optional global-``cond``)
+conditioning, and a per-token head over the vocabulary. ONE backbone, parameterized by config; `output_type` is config-selectable
 so the same model serves x₀-logits (D3PM/MDLM) and SEDD's concrete-score parameterization. The head
 always emits ``(B, L, V)``; what those values *mean* is the method's concern (Invariant 3-style).
 
@@ -108,12 +108,14 @@ class Transformer(Model):
         dropout: float = 0.0,
         time_conditioned: bool = True,
         rope: bool = False,
+        cond_dim: int = 0,
     ):
         super().__init__()
         self.vocab_size = vocab_size
         self.length = length
         self.output_type = output_type
         self.time_embed_dim = time_embed_dim
+        self.cond_dim = cond_dim
 
         self.tok = nn.Embedding(vocab_size, d_model)
         # RoPE (rotary, carried into attention) replaces the learned positional table; the time MLP
@@ -124,6 +126,9 @@ class Transformer(Model):
         self.time_mlp = nn.Sequential(
             nn.Linear(time_embed_dim, d_model), nn.SiLU(), nn.Linear(d_model, d_model)
         ) if time_conditioned else None
+        # Optional global conditioning: a per-sequence cond vector projected to d_model and added
+        # like the time embedding (DiT-style class/return conditioning). cond_dim=0 → no pathway.
+        self.cond_mlp = nn.Linear(cond_dim, d_model) if cond_dim > 0 else None
         self.blocks = nn.ModuleList(
             Block(d_model, n_heads, mlp_ratio, dropout) for _ in range(depth)
         )
@@ -133,6 +138,7 @@ class Transformer(Model):
             nn.init.normal_(self.pos, std=0.02)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+        self._check_cond(cond)                                               # §7: reject cond w/o pathway
         h = self.tok(x)                                                       # (B, L, d_model)
         if self.pos is not None:
             h = h + self.pos[:, : x.shape[1]]
@@ -141,6 +147,8 @@ class Transformer(Model):
             if t.ndim == 0:
                 t = t.expand(x.shape[0])
             h = h + self.time_mlp(sinusoidal_embedding(t, self.time_embed_dim)).unsqueeze(1)
+        if self.cond_mlp is not None and cond is not None:                   # global cond, added like time
+            h = h + self.cond_mlp(cond.to(h.dtype)).unsqueeze(1)             # (B, cond_dim) → (B, 1, d_model)
         rope = self.rope(x.shape[1]) if self.rope is not None else None
         for blk in self.blocks:
             h = blk(h, rope=rope)                                             # bidirectional attention

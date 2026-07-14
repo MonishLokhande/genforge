@@ -5,8 +5,11 @@ receding-horizon rollout in the adapter's env, returning per-episode scores (Pus
 robomimic sparse success — both fall out of ``MultiStepWrapper``'s max aggregation). With the
 default ``n_eval_envs=1`` episodes run serially over one env; ``n_eval_envs>1`` runs them in waves.
 
-lowdim only, no vision; no validate_wiring (the conditional-model To/cond_dim coupling
-isn't exposed yet); summarize inlined — swap to the shared eval-metrics util when it's ported.
+Lowdim or vision: an env exposing ``stack_env_images`` (i.e. one configured with ``image_keys``)
+opts the wrapper into a camera-frame deque and a dict cond — see ``make_rollout_wrapper``. No
+validate_wiring (the conditional-model To/cond_dim coupling isn't exposed yet), which is also why
+an image model's ``cond_dim = To·(n_cam·feat + proprio)`` needs no exemption here; summarize
+inlined — swap to the shared eval-metrics util when it's ported.
 """
 from __future__ import annotations
 
@@ -76,10 +79,16 @@ class PolicyTrainingRunner(TrainingRunner):
 
     def make_rollout_wrapper(self) -> MultiStepWrapper:
         obs_transform = getattr(self.environment, "flatten_env_obs", None)
+        # Duck-typed, like obs_transform: an env that serves camera frames opts the wrapper into
+        # the image deque + dict obs. Lowdim envs return None here and are unaffected.
+        image_transform = getattr(self.environment, "stack_env_images", None)
+        if image_transform is not None and getattr(self.environment, "image_keys", None) is None:
+            image_transform = None      # adapter supports images but this experiment didn't ask
         env = self.environment.build_env()
         return MultiStepWrapper(
             env, self.n_obs_steps, self.n_action_steps,
             max_episode_steps=self.max_episode_steps, obs_transform=obs_transform,
+            image_transform=image_transform,
         )
 
     def rollout(self, n_episodes: int) -> list[float]:

@@ -21,3 +21,17 @@ def expand_like(coeff, ref: torch.Tensor) -> torch.Tensor:
     while coeff.ndim < ref.ndim:
         coeff = coeff.unsqueeze(-1)
     return coeff
+
+
+def cond_to(cond, device):
+    """Move a conditioning spec's tensors to ``device``. Tensor | dict | None.
+
+    A bare ``if torch.is_tensor(cond)`` silently leaves a DICT cond on the CPU, which strands
+    image conditioning away from a CUDA model. Non-tensor dict values (e.g. `Pin`'s
+    ``{"pin": (indices, values)}`` tuple) pass through untouched.
+    """
+    if torch.is_tensor(cond):
+        return cond.to(device)
+    if isinstance(cond, dict):
+        return {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in cond.items()}
+    return cond

@@ -1,0 +1,4 @@
+# Held-out bits-per-token + perplexity for DISCRETE LMs (d3pm/mdlm). Hard-raises on continuous
+# methods. Needs a validation split (runner val_frac>0).
+name: perplexity
+params: {}   # n_mc: 4

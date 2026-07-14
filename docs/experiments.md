@@ -9,6 +9,7 @@ uv run forge list                                       # registered components
 uv run forge train  experiment=distributions/ddpm/base  # train
 uv run forge sample experiment=distributions/ddpm/base  # sample from the trained model
 uv run forge sample checkpoint=<path>.pt                # sample from a checkpoint alone
+uv run forge eval   experiment=distributions/ddpm/base  # sample, score, and persist metrics
 ```
 
 ---
@@ -78,7 +79,50 @@ A continuous trajectory diffuser for sequential planning.
 
 ---
 
-## 2. Logging & performance
+## 2. Evaluation & metrics
+
+Every run **scores and persists** its output. `evaluate()` draws one sample batch, writes it to
+`output/<…>/samples.npz` (the path mirrors the run's `ckpt_path`), scores it with the configured
+metrics, and writes a flat, step-stamped `output/<…>/metrics.json`.
+
+Metrics are a swappable component category (`@register("metric", …)`), selected per experiment with
+a `- /metric: <leaf>` default or bundled with `metric_set`:
+
+| Metric | Kind | Reports |
+| --- | --- | --- |
+| `mmd`, `energy`, `w2` | distribution distance (vs. an env reference draw) | how close generated samples are to the true distribution |
+| `mode_coverage` | coverage (needs `env.means`) | fraction of samples near a mode |
+| `val_loss` | held-out loss (any method) | a generalization signal |
+| `perplexity` | held-out bits/perplexity (discrete LMs) | held-out NELBO |
+| `metric_set` | composite | runs a list of the above |
+
+`w2` needs the `flow` extra; the held-out metrics (`val_loss`, `perplexity`) need a validation
+split (`runner.params.val_frac>0`).
+
+### `forge eval`
+
+```bash
+uv run forge eval experiment=distributions/ddpm/base    # build → sample → score → persist
+uv run forge eval checkpoint=<path>.pt                  # rebuild from the checkpoint alone
+uv run forge eval samples=<path>.npz experiment=...     # score a SAVED samples file — no re-sample
+```
+
+The offline `samples=` form re-scores persisted samples with the sample-driven metrics **without
+regenerating**; it fails loudly if a configured metric needs the model (use `checkpoint=` for those).
+
+### Validation split & best-checkpoint
+
+Opt-in, all default-off, all resume-safe (dedicated RNG streams — `val_frac=0` is byte-identical to
+no split):
+
+* `runner.params.val_frac=0.1` — hold out a fraction for a val-loss signal (and to feed held-out metrics).
+* `runner.params.val_every=N` — run a held-out val pass every `N` steps.
+* `runner.params.save_best=true` — keep `<ckpt>.best.pt` (+ a sibling `.best.metrics.json`) at the lowest val loss.
+* `runner.params.eval_every=N` — run the full sample-and-score on a cadence during training.
+
+---
+
+## 3. Logging & performance
 
 Logging is off by default and its dependencies are optional:
 
@@ -112,7 +156,7 @@ uv run forge train experiment=distributions/ddpm/base runner.params.amp=true
 
 ---
 
-## 3. Config layout
+## 4. Config layout
 
 The configuration tree separates framework defaults from experiment recipes:
 
@@ -125,7 +169,9 @@ src/forge/configs/                # framework component defaults
 ├── sampler/
 ├── cost/
 ├── control/
-└── preprocessor/                 # standardize / minmax
+├── preprocessor/                 # standardize / minmax
+├── visualizer/                   # scatter / trajectory
+└── metric/                       # mmd, energy, w2, mode_coverage, val_loss, perplexity, metric_set
 
 experiment/                       # the experiment tree
 └── <family>/

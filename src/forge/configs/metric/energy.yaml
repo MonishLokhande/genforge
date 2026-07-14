@@ -1,0 +1,2 @@
+name: energy
+params: {}   # n_ref: 0 (=len samples) · ref_seed: 0

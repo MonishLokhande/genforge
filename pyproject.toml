@@ -1,6 +1,6 @@
 [project]
 name = "genforge"
-version = "0.1.1"
+version = "0.1.3"
 description = "A unified, PyTorch-based framework for generative-modeling techniques with a clean control layer."
 readme = "README.md"
 license = "MIT"
@@ -44,6 +44,14 @@ dev = [
 ]
 docs = [
     "mkdocs-material>=9.7.6",
+]
+# Maintainer-only: publish trained checkpoints to the Hugging Face Hub with scripts/hub.py.
+# A dependency-group, not an extra: `scripts/` ships in neither the wheel nor the public repo, so an
+# installed user could never run it — advertising a `hub` extra would promise a tool they don't have.
+# Consumers fetch published checkpoints from the Hub directly, then `forge sample checkpoint=<file>.pt`
+# (checkpoints are self-contained). Sync locally with: uv sync --group hub
+hub = [
+    "huggingface-hub>=0.23.4",
 ]
 # Offline-RL / robot adapters (maze2d / locomotion / hf_lowdim / robomimic). Pins copied from an offline-RL reference implementation.
 # A dependency-group, not an extra: it contains a git direct-reference (robomimic) that PyPI rejects

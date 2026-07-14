@@ -6,8 +6,10 @@ dataset's ``pad_before`` edge replication) — any other convention (zero-pad) i
 train/eval obs-distribution mismatch at episode boundaries. Rewards aggregate over the whole
 episode (``max`` by default): PushT max coverage, robomimic sparse-success indicator.
 
-lowdim only; vision (image_transform/render) dropped from the original —
-add the image deque + dict obs back when an image policy lands.
+Lowdim by default. Passing ``image_transform`` opts into vision: a parallel camera-frame deque
+with the same edge-replication warm-up, and ``stacked_obs()`` then returns a dict
+``{"obs": proprio, "images": frames}`` for `PolicyWrapper` to turn into the model's cond.
+Without it the lowdim path is byte-identical.
 """
 from __future__ import annotations
 
@@ -53,6 +55,7 @@ class MultiStepWrapper:
         max_episode_steps: int | None = None,
         reward_agg: str = "max",
         obs_transform: Callable[[Any], np.ndarray] | None = None,
+        image_transform: Callable[[Any], np.ndarray] | None = None,
     ) -> None:
         if n_obs_steps <= 0 or n_action_steps <= 0:
             raise ValueError(
@@ -64,7 +67,10 @@ class MultiStepWrapper:
         self.max_episode_steps = max_episode_steps
         self.reward_agg = reward_agg
         self.obs_transform = obs_transform
+        # None => lowdim (byte-identical to before). Set => a parallel uint8 camera deque.
+        self.image_transform = image_transform
         self.obs: deque = deque(maxlen=self.n_obs_steps)
+        self.images: deque = deque(maxlen=self.n_obs_steps)
         self.rewards: list[float] = []
         self.steps_taken = 0
         self.done = False
@@ -81,11 +87,18 @@ class MultiStepWrapper:
         pad = self.n_obs_steps - len(avail)
         return np.stack([avail[0]] * pad + avail, axis=0)
 
-    def stacked_obs(self) -> np.ndarray:
-        return self.stack_deque(self.obs)
+    def stacked_obs(self):
+        """``(To, Do)`` lowdim, or ``{"obs": (To, Do), "images": (To, n_cam, C, H, W) uint8}``."""
+        stacked = self.stack_deque(self.obs)
+        if self.image_transform is None:
+            return stacked
+        return {"obs": stacked, "images": self.stack_deque(self.images)}
 
     def record_obs(self, raw_obs) -> None:
         self.obs.append(self.transform(raw_obs))
+        if self.image_transform is not None:
+            # uint8 kept as-is — the vision encoder does the /255 (Inv 9).
+            self.images.append(np.asarray(self.image_transform(raw_obs)))
 
     def reset(self, seed: int | None = None) -> np.ndarray:
         try:
@@ -94,6 +107,7 @@ class MultiStepWrapper:
             out = self.env.reset()
         raw_obs = out[0] if isinstance(out, tuple) else out
         self.obs = deque(maxlen=self.n_obs_steps)
+        self.images = deque(maxlen=self.n_obs_steps)
         self.record_obs(raw_obs)
         self.rewards = []
         self.steps_taken = 0
@@ -187,9 +201,16 @@ class PolicyWrapper:
         return next(self.sampler.model.parameters()).device
 
     def predict_action(self, obs_stack):
-        """Plan one action chunk from an observation history ``(To, Do)`` / ``(B, To, Do)``.
-        Returns ``(Ta, Da)`` (or batched) in raw action space."""
+        """Plan one action chunk from an observation history.
+
+        ``obs_stack`` is either an array ``(To, Do)`` / ``(B, To, Do)`` (lowdim policy), or a dict
+        ``{"obs": proprio, "images": (To, n_cam, C, H, W) uint8}`` (vision policy — the image model
+        encodes the cameras into the conditioning). Returns ``(Ta, Da)`` in raw action space.
+        """
         import torch
+        images = None
+        if isinstance(obs_stack, dict):
+            images, obs_stack = obs_stack.get("images"), obs_stack.get("obs")
         obs = torch.as_tensor(np.asarray(obs_stack), dtype=torch.float32)
         unbatched = obs.ndim == 2
         if unbatched:
@@ -199,8 +220,16 @@ class PolicyWrapper:
                 f"obs stack has {obs.shape[1]} steps, expected n_obs_steps={self.n_obs_steps}"
             )
         obs = obs.to(self.device())
-        # Inv 9: flatten to (B, To*Do) — raw, un-normalized; model's ObsNormalizer handles it
-        cond = obs.reshape(obs.shape[0], -1)               # (B, To*Do)
+        if images is None:
+            # Inv 9: flatten to (B, To*Do) — raw, un-normalized; model's ObsNormalizer handles it
+            cond = obs.reshape(obs.shape[0], -1)           # (B, To*Do)
+        else:
+            img = torch.as_tensor(np.asarray(images))      # (To, n_cam, C, H, W) uint8 — keep uint8
+            if unbatched:
+                img = img.unsqueeze(0)
+            # Rank-3 obs_history (NOT flattened): VisionUNet slices [:, :n_obs_steps] and cats
+            # per-timestep. Both streams stay RAW — the model's obs_normalizer normalizes (Inv 9).
+            cond = {"obs_history": obs, "obs_images": img.to(self.device())}
 
         model = self.sampler.model
         model.eval()

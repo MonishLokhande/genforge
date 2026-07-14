@@ -1,0 +1,3 @@
+# Held-out generalization signal (any method). Needs a validation split (runner val_frac>0).
+name: val_loss
+params: {}   # n_mc: 4

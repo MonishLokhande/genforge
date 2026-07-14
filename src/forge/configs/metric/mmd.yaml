@@ -1,0 +1,2 @@
+name: mmd
+params: {}   # n_ref: 0 (=len samples) · ref_seed: 0 · bandwidths: null (reference-median heuristic)

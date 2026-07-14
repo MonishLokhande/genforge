@@ -1,4 +1,4 @@
-"""The ``forge`` command-line entrypoint: ``list`` / ``train`` / ``sample``.
+"""The ``forge`` command-line entrypoint: ``list`` / ``train`` / ``sample`` / ``eval``.
 
 ``list`` imports the built-ins so registrations fire, then prints the registered components by
 category. ``train`` / ``sample`` compose a Hydra config from an ``experiment=`` selection, build the
@@ -65,7 +65,7 @@ def _run_from_config(overrides: Sequence[str], action: str) -> int:
         print(f"[train] done. eval: {metrics}")
         return 0
 
-    # sample from an experiment: load its configured checkpoint if present.
+    # sample/eval from an experiment: load its configured checkpoint if present.
     ckpt_path = getattr(runner, "ckpt_path", None)
     if ckpt_path:
         from pathlib import Path
@@ -74,14 +74,14 @@ def _run_from_config(overrides: Sequence[str], action: str) -> int:
 
         if not Path(ckpt_path).exists():
             print(
-                f"`forge sample` found no checkpoint at {ckpt_path!r}. Train first "
+                f"`forge {action}` found no checkpoint at {ckpt_path!r}. Train first "
                 f"(`forge train experiment=...`) or pass `checkpoint=<path.pt>`.",
                 file=sys.stderr,
             )
             return 1
         runner.load_state(load_checkpoint(ckpt_path))
     metrics = runner.evaluate()
-    print(f"[sample] {metrics}")
+    print(f"[{action}] {metrics}")
     return 0
 
 
@@ -112,6 +112,56 @@ def _cmd_sample(args: argparse.Namespace) -> int:
     return _run_from_config(args.overrides, "sample")
 
 
+def _cmd_eval(args: argparse.Namespace) -> int:
+    flat = _split_overrides(args.overrides)
+    if "samples" in flat:
+        # Offline: score a saved samples file — build a LIGHTWEIGHT pipeline (no weight load, no
+        # sampling), run sample-driven metrics against the env reference. Data-driven metrics
+        # (which need the model + held-out data) RAISE — direct the user to `checkpoint=`.
+        from omegaconf import OmegaConf
+
+        from .core.checkpoint import load_checkpoint
+        from .utils.persistence import load_samples, save_metrics
+
+        if "experiment" in flat:
+            from .core.compose import compose_config
+
+            # Strip CLI-only keys (samples=/checkpoint=) — they are not Hydra config overrides.
+            hydra = [o for o in args.overrides if o.split("=", 1)[0] not in ("samples", "checkpoint")]
+            cfg = compose_config(hydra)
+            runner = build(cfg)
+            runner.resolved_config = OmegaConf.to_container(cfg, resolve=True)
+        elif "checkpoint" in flat:
+            runner = build(load_checkpoint(flat["checkpoint"])["config"])  # config only, no weights
+        else:
+            print("`forge eval samples=<file>` also needs `experiment=...` or `checkpoint=<.pt>` "
+                  "to build the env + metric.", file=sys.stderr)
+            return 2
+        if runner.metric is None:
+            print("`forge eval samples=` needs a metric configured (a `metric` leaf in the "
+                  "experiment/checkpoint).", file=sys.stderr)
+            return 2
+        samples = load_samples(flat["samples"])
+        metrics = {"n": float(samples.shape[0])}
+        metrics.update(runner.metric(samples=samples, held_out=None))  # data-driven → raises (fail-loud)
+        out_dir = runner._output_dir()
+        if out_dir is not None:
+            save_metrics(out_dir, metrics, step=getattr(runner, "_completed_steps", 0))
+        print(f"[eval] samples={flat['samples']}: {metrics}")
+        return 0
+    if "checkpoint" in flat:
+        from .runners.training import TrainingRunner
+
+        runner = TrainingRunner.from_checkpoint(flat["checkpoint"], build_fn=build)
+        print(f"[eval] from checkpoint {flat['checkpoint']}: {runner.evaluate()}")
+        return 0
+    if "experiment" not in flat:
+        print(f"`forge eval` requires `experiment=...`, `checkpoint=<.pt>`, or `samples=<file>` "
+              f"(with experiment=/checkpoint=). {_EXPERIMENT_HINT}", file=sys.stderr)
+        return 2
+    return _run_from_config(args.overrides, "eval")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="forge",
@@ -129,6 +179,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sample = sub.add_parser("sample", help="Sample from a trained model or checkpoint.")
     p_sample.add_argument("overrides", nargs="*", help="experiment=... or checkpoint=<path.pt>")
     p_sample.set_defaults(func=_cmd_sample)
+
+    p_eval = sub.add_parser("eval", help="Score a checkpoint/experiment, or a saved samples file.")
+    p_eval.add_argument("overrides", nargs="*",
+                        help="experiment=... | checkpoint=<.pt> | samples=<file> (+experiment/checkpoint)")
+    p_eval.set_defaults(func=_cmd_eval)
 
     return parser
 

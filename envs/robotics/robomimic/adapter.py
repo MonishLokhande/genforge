@@ -35,6 +35,75 @@ DEFAULT_LOW_DIM_KEYS: tuple[str, ...] = (
 # robomimic-wrapper rollout and the direct-robosuite render rollout.
 OBS_KEY_ALIASES: dict[str, str] = {"object": "object-state"}
 
+# Camera order for vision policies — frozen to the order the trained image checkpoints declare.
+# NOTE a vision policy's `obs_keys` is NOT DEFAULT_LOW_DIM_KEYS: it drops the privileged "object"
+# state (the camera is meant to supply it), giving proprio_dim=9 rather than 23. An image
+# experiment must therefore set `obs_keys` explicitly.
+DEFAULT_IMAGE_KEYS: tuple[str, ...] = (
+    "agentview_image",
+    "robot0_eye_in_hand_image",
+)
+
+
+class LazyEpisodeImages:
+    """One episode's camera frames, read from the HDF5 on demand.
+
+    Yielded by ``episodes()`` instead of a materialized array so the DATASET decides the policy:
+    ``np.asarray(...)`` (via ``__array__``) pulls the whole episode for the in-RAM path, while
+    ``read(local)`` fetches just the frames a batch needs for the streaming path. One flag
+    (``dataset.stream``) therefore controls RAM-vs-stream, and the eager path is byte-identical
+    to a direct read.
+
+    Two HDF5 landmines this exists to handle:
+      * handles are NOT fork-safe — a handle opened in the parent and touched in a DataLoader
+        worker misbehaves, so it is (re)opened per worker and dropped from the pickled state.
+      * fancy indexing requires STRICTLY INCREASING, duplicate-free indices — `read` sorts and
+        de-duplicates, and the caller restores the original order.
+    """
+
+    def __init__(self, path: str, demo: str, keys: Sequence[str], length: int, frame_shape):
+        self.path, self.demo, self.keys = str(path), str(demo), list(keys)
+        self.length, self.frame_shape = int(length), tuple(frame_shape)   # frame: (C, H, W)
+        self._f = None
+        self._wid = None
+
+    def __getstate__(self):
+        d = self.__dict__.copy()
+        d["_f"] = d["_wid"] = None      # h5py handles cannot be pickled to a worker
+        return d
+
+    def _obs_grp(self):
+        import h5py
+        from torch.utils.data import get_worker_info
+
+        info = get_worker_info()
+        wid = -1 if info is None else info.id
+        if self._f is None or self._wid != wid:
+            self._f = h5py.File(self.path, "r")     # per-worker handle (fork-safety)
+            self._wid = wid
+        return self._f[f"data/{self.demo}/obs"]
+
+    def __len__(self) -> int:
+        return self.length
+
+    @property
+    def shape(self):
+        return (self.length, len(self.keys), *self.frame_shape)
+
+    def read(self, local) -> np.ndarray:
+        """Frames at ``local`` (any order, duplicates allowed) → ``(n, n_cam, C, H, W)`` uint8."""
+        local = np.asarray(local).reshape(-1)
+        uniq, inv = np.unique(local, return_inverse=True)   # sorted + de-duped for h5py
+        grp = self._obs_grp()
+        frames = np.stack(
+            [np.asarray(grp[k][uniq]).transpose(0, 3, 1, 2) for k in self.keys], axis=1
+        )
+        return frames[inv]                                   # restore the caller's order
+
+    def __array__(self, dtype=None):
+        out = self.read(np.arange(self.length))
+        return out if dtype is None else out.astype(dtype)
+
 
 @register("environment", "robomimic")
 class RobomimicAdapter:
@@ -56,6 +125,7 @@ class RobomimicAdapter:
         *,
         path: str | None = None,
         obs_keys: Sequence[str] | None = None,
+        image_keys: Sequence[str] | None = None,
         filter_key: str | None = None,
         **kwargs,
     ):
@@ -63,6 +133,9 @@ class RobomimicAdapter:
         self.path = path or name
         self.distribution = name      # runner.ckpt_key() reads this
         self.obs_keys = list(obs_keys) if obs_keys is not None else None
+        # None => lowdim adapter, byte-identical to before. Set it to opt into camera frames:
+        # episodes() then yields ep["images"] and stack_env_images() serves the rollout.
+        self.image_keys = list(image_keys) if image_keys is not None else None
         self.filter_key = filter_key
         self.env_meta: dict | None = None
 
@@ -97,6 +170,40 @@ class RobomimicAdapter:
             ],
             axis=1,
         )
+
+    @staticmethod
+    def stack_images(obs_grp, keys: Sequence[str]) -> np.ndarray:
+        """HDF5 camera frames → ``(T, n_cam, C, H, W)`` uint8, in ``keys`` order.
+
+        The image datasets already store DECODED, RESIZED ``(T, 84, 84, 3)`` uint8 per camera, so
+        this is a key read + an HWC→CHW transpose. No decode, no resize, no PIL/cv2.
+        uint8 is preserved end-to-end — the vision encoder does the ``/255`` (Inv 9).
+        """
+        return np.stack(
+            [np.asarray(obs_grp[k][()]).transpose(0, 3, 1, 2) for k in keys], axis=1
+        )
+
+    def stack_env_images(self, obs) -> np.ndarray:
+        """Env dict observation → ``(n_cam, C, H, W)`` uint8, in ``image_keys`` order.
+
+        Paired with `stack_images` so ONE object owns camera order + layout on both the HDF5 and
+        the rollout side — that pairing is what keeps train and rollout from skewing. robomimic's
+        ``rgb`` modality hands back the SAME ``(84, 84, 3)`` uint8 HWC the HDF5 stores, so this is
+        the identical transpose (verified: env vs HDF5 frames agree to mean |diff| < 1/255).
+        """
+        keys = self.image_keys or list(DEFAULT_IMAGE_KEYS)
+        parts = []
+        for key in keys:
+            if key not in obs:
+                raise KeyError(
+                    f"Env observation missing image key '{key}'. Available: {list(obs.keys())}. "
+                    "Was the env built with use_image_obs=True and the rgb modality registered?"
+                )
+            frame = np.asarray(obs[key])
+            if frame.ndim == 3 and frame.shape[-1] in (1, 3):   # HWC → CHW
+                frame = frame.transpose(2, 0, 1)
+            parts.append(frame)
+        return np.stack(parts, axis=0)
 
     def flatten_env_obs(self, obs) -> np.ndarray:
         """Flatten a robomimic dict observation in ``obs_keys`` order so the
@@ -157,7 +264,11 @@ class RobomimicAdapter:
         import robomimic.utils.obs_utils as ObsUtils
         if ObsUtils.OBS_KEYS_TO_MODALITIES is None:
             keys = list(self.obs_keys) if self.obs_keys is not None else list(DEFAULT_LOW_DIM_KEYS)
-            ObsUtils.initialize_obs_modality_mapping_from_dict({"low_dim": keys})
+            mapping: dict[str, list[str]] = {"low_dim": keys}
+            if self.image_keys is not None:
+                # Without an `rgb` entry EnvRobosuite.get_observation() mishandles the camera keys.
+                mapping["rgb"] = list(self.image_keys)
+            ObsUtils.initialize_obs_modality_mapping_from_dict(mapping)
 
     def build_env(self):
         try:
@@ -169,9 +280,15 @@ class RobomimicAdapter:
                 "`uv sync --group robotics`."
             ) from e
         self.ensure_obs_utils()
+        images = self.image_keys is not None
+        # Offscreen rendering is what actually produces the camera frames; the dataset's own
+        # env_args already declare the cameras + 84x84, robomimic just has to be told to keep them.
+        # Headless needs MUJOCO_GL=egl (or osmesa) or mujoco raises a FatalError on context init.
         return EnvUtils.create_env_from_metadata(
             env_meta=self.read_env_meta(),
             render=False,
+            render_offscreen=images,
+            use_image_obs=images,
         )
 
     @staticmethod
@@ -221,7 +338,7 @@ class RobomimicAdapter:
                     else np.concatenate([observations[1:], observations[-1:]], axis=0)
                 )
 
-                yield {
+                episode = {
                     "observations": observations[:T],
                     "actions": actions,
                     "rewards": rewards[:T],
@@ -229,6 +346,14 @@ class RobomimicAdapter:
                     "timeouts": timeouts,
                     "next_observations": next_observations[:T],
                 }
+                if self.image_keys is not None:
+                    # A lazy accessor, NOT an array: the dataset materializes it (in-RAM path) or
+                    # reads per batch (streaming). uint8 (T, n_cam, C, H, W) either way (Inv 9).
+                    h, w, _c = demo["obs"][self.image_keys[0]].shape[1:]
+                    episode["images"] = LazyEpisodeImages(
+                        self.path, demo_name, self.image_keys, T, frame_shape=(3, h, w)
+                    )
+                yield episode
 
 
-__all__ = ["RobomimicAdapter", "DEFAULT_LOW_DIM_KEYS"]
+__all__ = ["RobomimicAdapter", "DEFAULT_LOW_DIM_KEYS", "DEFAULT_IMAGE_KEYS"]
