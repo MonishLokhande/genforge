@@ -1,0 +1,68 @@
+# @package _global_
+# Autoregressive GPT-2-BPE LM (nanoGPT-style) as a bundled plugin — a NON-diffusion guest paradigm.
+# The model is the shared `transformer` run causal + time-free; `space`/`schedule` are built but INERT
+# (AR has no forward-noising or reverse step). It reuses the built-in `training` runner — whose
+# optimizer now expresses the nanoGPT recipe (AdamW + 2-D-only decay + betas + warmup→cosine), so no
+# custom runner is needed — and the `env_render` visualizer to write generated text to samples.txt.
+#
+# Tokenizer is GPT-2 BPE (vocab 50257, fixed by the tokenizer). source=builtin BPE-encodes a small
+# built-in passage so this runs OFFLINE on CPU (needs only the cached tiktoken vocab). For the real
+# corpus, override environment.params.source=tinystories (needs `uv sync --extra text` + a GPU).
+
+plugins:
+  - envs.text.ar
+
+space:    { name: discrete,         params: { num_classes: 50257, length: 64 } }   # inert
+schedule: { name: uniform_discrete, params: { num_classes: 50257 } }               # inert
+
+model:
+  name: transformer
+  params:
+    vocab_size: 50257
+    length: 64
+    d_model: 128
+    depth: 4
+    n_heads: 4
+    output_type: logits
+    time_conditioned: false     # AR has no diffusion time
+    causal: true                # autoregressive attention mask
+    rope: false                 # learned positional table (nanoGPT-style)
+
+method:  { name: autoregressive, params: {} }
+# eos_id=50256 (GPT-2 <|endoftext|>) seeds each sample as a fresh document and stops generation at
+# the story boundary; the corpus is EOS-bracketed so that token is trained.
+sampler: { name: autoregressive, params: { temperature: 0.8, top_k: 40, eos_id: 50256 } }
+
+# source=builtin (offline BPE smoke) | tinystories (real, needs --extra text + GPU).
+environment: { name: ar_text,    params: { source: builtin, repeat: 200, val_frac: 0.1 } }
+dataset:     { name: ar_windows, params: { block_size: 64, split: train } }
+
+# Generated tokens → a readable samples.txt via the env's decode (the reused env_render visualizer).
+visualizer: { name: env_render, params: {} }
+
+# HONEST held-out perplexity on the disjoint val region (env.val_tokens) — not the runner's leaky
+# index split, which is why runner val_frac stays 0. Reported at eval + written to metrics.json.
+metric: { name: ar_perplexity, params: { block_size: 64, n_batches: 50, batch_size: 32 } }
+
+runner:
+  name: training
+  params:
+    steps: 500
+    batch_size: 32
+    lr: 1.0e-3
+    optimizer: adamw            # the nanoGPT recipe the base runner now expresses natively
+    decay_1d: false             # decay matrices only (biases / LayerNorm exempt)
+    betas: [0.9, 0.99]
+    weight_decay: 0.1
+    warmup_steps: 100
+    lr_schedule: cosine
+    ema_decay: 0.99
+    device: cpu
+    seed: 0
+    sample_seed: 1234
+    val_frac: 0.0               # honest held-out perplexity needs the disjoint val region (follow-up),
+                                # NOT the runner's index split (leaks for LM windows) — so no ppl here
+    n_eval_samples: 4           # generate 4 sequences to decode
+    n_sample_steps: 0           # unused by the AR sampler
+    log_every: 50
+    ckpt_path: checkpoints/text/ar/base.pt

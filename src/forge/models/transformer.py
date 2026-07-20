@@ -1,7 +1,8 @@
 """A minimal sequence transformer — the SHARED backbone for the discrete-diffusion LMs.
 
-Token + learned-positional embedding, a stack of bidirectional self-attention blocks (denoising
-sees the whole corrupted sequence, so no causal mask), additive time (and optional global-``cond``)
+Token + learned-positional embedding, a stack of self-attention blocks (bidirectional by default —
+denoising sees the whole corrupted sequence; an opt-in ``causal=True`` masks the future so the same
+backbone can serve an autoregressive LM), additive time (and optional global-``cond``)
 conditioning, and a per-token head over the vocabulary. ONE backbone, parameterized by config; `output_type` is config-selectable
 so the same model serves x₀-logits (D3PM/MDLM) and SEDD's concrete-score parameterization. The head
 always emits ``(B, L, V)``; what those values *mean* is the method's concern (Invariant 3-style).
@@ -46,14 +47,16 @@ class RotaryEmbedding(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    """Bidirectional multi-head self-attention with separate q/k/v/out projections."""
+    """Multi-head self-attention with separate q/k/v/out projections. Bidirectional by default;
+    ``causal=True`` masks each position to attend only to itself and earlier (autoregressive)."""
 
-    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.0):
+    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.0, causal: bool = False):
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
         self.n_heads = n_heads
         self.d_head = d_model // n_heads
         self.dropout = dropout
+        self.causal = causal
         self.q = nn.Linear(d_model, d_model)
         self.k = nn.Linear(d_model, d_model)
         self.v = nn.Linear(d_model, d_model)
@@ -69,7 +72,8 @@ class SelfAttention(nn.Module):
             cos, sin = (r.to(q.dtype) for r in rope)      # (L, dh)
             q = q * cos + _rotate_half(q) * sin
             k = k * cos + _rotate_half(k) * sin
-        o = F.scaled_dot_product_attention(q, k, v, dropout_p=self.dropout if self.training else 0.0)
+        o = F.scaled_dot_product_attention(q, k, v, dropout_p=self.dropout if self.training else 0.0,
+                                           is_causal=self.causal)
         o = o.transpose(1, 2).reshape(B, L, D)            # (B, L, D)
         return self.out_proj(o)
 
@@ -77,10 +81,11 @@ class SelfAttention(nn.Module):
 class Block(nn.Module):
     """Pre-norm transformer block: attention + GELU MLP, each with a residual."""
 
-    def __init__(self, d_model: int, n_heads: int, mlp_ratio: int, dropout: float = 0.0):
+    def __init__(self, d_model: int, n_heads: int, mlp_ratio: int, dropout: float = 0.0,
+                 causal: bool = False):
         super().__init__()
         self.norm1 = nn.LayerNorm(d_model)
-        self.attn = SelfAttention(d_model, n_heads, dropout)
+        self.attn = SelfAttention(d_model, n_heads, dropout, causal=causal)
         self.norm2 = nn.LayerNorm(d_model)
         self.linear1 = nn.Linear(d_model, d_model * mlp_ratio)
         self.linear2 = nn.Linear(d_model * mlp_ratio, d_model)
@@ -109,6 +114,7 @@ class Transformer(Model):
         time_conditioned: bool = True,
         rope: bool = False,
         cond_dim: int = 0,
+        causal: bool = False,
     ):
         super().__init__()
         self.vocab_size = vocab_size
@@ -130,7 +136,7 @@ class Transformer(Model):
         # like the time embedding (DiT-style class/return conditioning). cond_dim=0 → no pathway.
         self.cond_mlp = nn.Linear(cond_dim, d_model) if cond_dim > 0 else None
         self.blocks = nn.ModuleList(
-            Block(d_model, n_heads, mlp_ratio, dropout) for _ in range(depth)
+            Block(d_model, n_heads, mlp_ratio, dropout, causal=causal) for _ in range(depth)
         )
         self.norm = nn.LayerNorm(d_model)
         self.head = nn.Linear(d_model, vocab_size)
@@ -138,7 +144,7 @@ class Transformer(Model):
             nn.init.normal_(self.pos, std=0.02)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, cond: Optional[torch.Tensor] = None) -> torch.Tensor:
-        self._check_cond(cond)                                               # §7: reject cond w/o pathway
+        self._check_cond(cond)                                               # the design contract: reject cond w/o pathway
         h = self.tok(x)                                                       # (B, L, d_model)
         if self.pos is not None:
             h = h + self.pos[:, : x.shape[1]]

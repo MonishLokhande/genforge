@@ -74,7 +74,7 @@ class PolicyTrainingRunner(TrainingRunner):
             self.sampler, self.preprocessor,
             n_obs_steps=self.n_obs_steps, n_action_steps=self.n_action_steps,
             sample_shape=self.dataset.sample_shape, n_sample_steps=self.n_sample_steps,
-            ema=self.ema,
+            ema=self.ema, sample_seed=self.sample_seed,
         )
 
     def make_rollout_wrapper(self) -> MultiStepWrapper:
@@ -102,6 +102,7 @@ class PolicyTrainingRunner(TrainingRunner):
         scores: list[float] = []
         for ep in range(n_episodes):
             obs = wrapper.reset(seed=self.rollout_seed + ep)
+            policy.seed_episode(ep)           # seed the PLAN noise too, not just the env
             done = False
             while not done:
                 chunk = policy.predict_action(obs)
@@ -120,8 +121,14 @@ class PolicyTrainingRunner(TrainingRunner):
             wave = range(ep, min(ep + n_envs, n_episodes))
             active = self.eval_wrappers[: len(wave)]
             obs = [w.reset(seed=self.rollout_seed + i) for w, i in zip(active, wave)]
+            policy.seed_episode(wave[0])      # one batched draw serves the wave; key it on its first ep
             while not all(w.done for w in active):
-                chunks = policy.predict_action(np.stack(obs))            # (N, To, Do)
+                # Vision wrappers yield per-env dicts {"obs","images"}; batch each field so
+                # predict_action's dict path fires. np.stack on a list of dicts would give an
+                # object array and fall through to the lowdim branch (crash on as_tensor).
+                stacked = ({k: np.stack([o[k] for o in obs]) for k in obs[0]}
+                           if isinstance(obs[0], dict) else np.stack(obs))
+                chunks = policy.predict_action(stacked)                  # (N, To, Do)
                 obs = [w.step(np.asarray(chunks[k].detach().cpu()))[0]
                        for k, w in enumerate(active)]
             scores.extend(w.episode_score() for w in active)

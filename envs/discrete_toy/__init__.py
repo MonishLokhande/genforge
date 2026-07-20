@@ -3,8 +3,7 @@
 from envs.common.dataset import DistributionDataset as Dataset
 
 from .environment import CategoricalToy
-from .processor import IdentityProcessor as Processor
 
 Environment = CategoricalToy
 
-__all__ = ["Environment", "Dataset", "Processor", "CategoricalToy"]
+__all__ = ["Environment", "Dataset", "CategoricalToy"]

@@ -23,6 +23,7 @@ import torch
 from forge.core.registry import register
 from forge.control.value_guidance import AmortizedValueController
 from forge.runners.multistep import MultiStepWrapper
+from forge.utils.seeding import make_generator
 
 
 @register("control", "diffuser_value_guidance")
@@ -113,12 +114,19 @@ class GuidedLocomotionEval:
 
     def __init__(self, runner, value_ckpt: str | None, *, action_dim: int,
                  n_samples: int = 64, max_episode_steps: int = 1000,
-                 rollout_seed: int = 100000):
+                 rollout_seed: int = 100000, sample_seed: int | None = None):
         self.runner = runner
         self.action_dim = int(action_dim)
         self.n_samples = int(n_samples)
         self.max_episode_steps = int(max_episode_steps)
         self.rollout_seed = int(rollout_seed)
+        # Seeding the ENV alone is not reproducibility: the plans are drawn by the reverse process,
+        # so an unseeded sampler re-rolls every candidate each run and the SAME checkpoint scores
+        # differently. Defaults to the runner's own sample_seed — the seed forge already uses for
+        # `TrainingRunner.sample` — so one knob controls both.
+        seed = getattr(runner, "sample_seed", None) if sample_seed is None else sample_seed
+        self.sample_seed = None if seed is None else int(seed)   # None = unseeded (matches PolicyWrapper)
+        self._gen: "torch.Generator | None" = None     # set per EPISODE by rollout()
         self.control = None
         if value_ckpt is not None:
             self.control = DiffuserValueGuidance(
@@ -153,7 +161,7 @@ class GuidedLocomotionEval:
         values[:, 0, self.action_dim:] = nobs
 
         out = r.sampler.sample((self.n_samples, h, dim), r.n_sample_steps,
-                               cond={"inpaint": (mask, values)})
+                               cond={"inpaint": (mask, values)}, generator=self._gen)
         plans = out.samples                            # (N, H, dim), planner-normalized
 
         best = 0
@@ -185,6 +193,11 @@ class GuidedLocomotionEval:
             scores: list[float] = []
             for ep in range(n_episodes):
                 obs = wrapper.reset(seed=self.rollout_seed + ep)
+                # One generator per EPISODE, derived from (sample_seed, ep): plan noise still varies
+                # across replans and across episodes, but the whole rollout is reproducible. Made
+                # here, not in __init__, so episode e does not inherit the generator POSITION left
+                # by however many replans episode e-1 happened to need.
+                self._gen = make_generator(self.sample_seed + ep, device)
                 done = False
                 while not done:
                     action = self.predict_action(obs)

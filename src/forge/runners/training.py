@@ -108,9 +108,14 @@ class TrainingRunner(Runner):
         steps: int = 2000,
         batch_size: int = 256,
         lr: float = 1e-3,
+        betas: tuple = (0.9, 0.999),         # Adam/AdamW moments; transformer training wants beta2≈0.95
         weight_decay: float = 0.0,
+        optimizer: str = "adamw",            # "adamw" (decoupled) | "adam" (coupled L2); else → own runner
+        decay_1d: bool = True,               # decay 1-D params (biases, LayerNorm/RMSNorm gains) too;
+                                             # False → nanoGPT-style exclusion (only bites when wd>0)
         lr_schedule: Optional[str] = None,   # None | "cosine"
         lr_min_ratio: float = 0.05,
+        warmup_steps: int = 0,               # linear LR warmup before the schedule (0 = off)
         ema_decay: float = 0.999,
         ema_warmup: int = 10,
         grad_clip: Optional[float] = None,
@@ -149,9 +154,13 @@ class TrainingRunner(Runner):
         self.steps = steps
         self.batch_size = batch_size
         self.lr = lr
+        self.betas = betas
         self.weight_decay = weight_decay
+        self.optimizer = optimizer
+        self.decay_1d = decay_1d
         self.lr_schedule = lr_schedule
         self.lr_min_ratio = lr_min_ratio
+        self.warmup_steps = warmup_steps
         self.ema_decay = ema_decay
         self.ema_warmup = ema_warmup
         self.grad_clip = grad_clip
@@ -256,6 +265,59 @@ class TrainingRunner(Runner):
         n = apply_lora(self.model, **spec)
         print(f"[train] LoRA: wrapped {n} layer(s) (r={spec.get('r', 8)}, targets matched).")
 
+    def _build_optimizer(self, params) -> torch.optim.Optimizer:
+        """Assemble the optimizer from the runner's knobs (the design contract).
+
+        - `optimizer`: 'adamw' (decoupled decay — the default) | 'adam' (weight_decay folded into the
+          gradient as coupled L2). Anything else fails loudly: register your own runner (Invariant 7).
+        - `betas`: passed through — transformer training usually wants beta2≈0.95, not Adam's 0.999.
+        - `weight_decay`: when `decay_1d` is False it is EXCLUDED from 1-D params (biases,
+          LayerNorm/RMSNorm gains) via two param groups — the nanoGPT convention. No-op when wd==0.
+        """
+        try:
+            opt_cls = {"adam": torch.optim.Adam, "adamw": torch.optim.AdamW}[self.optimizer.lower()]
+        except KeyError:
+            raise ValueError(
+                f"Unknown optimizer {self.optimizer!r}; choose from 'adam', 'adamw'. "
+                f"For any other optimizer, register a new runner (Invariant 7)."
+            )
+        if self.optimizer.lower() == "adam" and self.weight_decay > 0:
+            print(
+                f"[train] optimizer=adam folds weight_decay={self.weight_decay} into the gradient as "
+                f"coupled L2, which interacts poorly with Adam's per-parameter scaling. Prefer "
+                f"optimizer=adamw for decoupled decay (AdamW, 2019)."
+            )
+        params = list(params)
+        betas = tuple(self.betas)
+        if self.weight_decay > 0 and not self.decay_1d:
+            decay = [p for p in params if p.dim() >= 2]
+            no_decay = [p for p in params if p.dim() < 2]
+            groups = []
+            if decay:
+                groups.append({"params": decay, "weight_decay": self.weight_decay})
+            if no_decay:
+                groups.append({"params": no_decay, "weight_decay": 0.0})
+            return opt_cls(groups, lr=self.lr, betas=betas)
+        return opt_cls(params, lr=self.lr, betas=betas, weight_decay=self.weight_decay)
+
+    def _build_scheduler(self, opt):
+        """Optional cosine schedule, optionally prefixed by a linear LR warmup. None => flat LR."""
+        S = torch.optim.lr_scheduler
+        base = None
+        if self.lr_schedule == "cosine":
+            base = S.CosineAnnealingLR(
+                opt, T_max=max(1, self.steps - self.warmup_steps),
+                eta_min=self.lr * self.lr_min_ratio,
+            )
+        elif self.lr_schedule not in (None, "none"):
+            raise ValueError(f"Unknown lr_schedule {self.lr_schedule!r} (expected None or 'cosine').")
+        if self.warmup_steps > 0:
+            warm = S.LinearLR(opt, start_factor=1.0 / self.warmup_steps, total_iters=self.warmup_steps)
+            if base is None:
+                return warm                                    # warmup, then hold at full lr
+            return S.SequentialLR(opt, [warm, base], milestones=[self.warmup_steps])
+        return base
+
     def train(self, resume_from: Optional[str | dict] = None) -> None:
         set_seed(self.seed, self.deterministic)
         device = torch.device(self.device)
@@ -292,17 +354,8 @@ class TrainingRunner(Runner):
 
         self.ema = EMA(self.model, self.ema_decay, warmup=self.ema_warmup)
         # Optimizer sees only trainable params — a no-op when nothing is frozen, required for LoRA.
-        opt = torch.optim.Adam(
-            [p for p in self.model.parameters() if p.requires_grad],
-            lr=self.lr, weight_decay=self.weight_decay,
-        )
-        lr_sched = None
-        if self.lr_schedule == "cosine":
-            lr_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
-                opt, T_max=self.steps, eta_min=self.lr * self.lr_min_ratio
-            )
-        elif self.lr_schedule not in (None, "none"):
-            raise ValueError(f"Unknown lr_schedule {self.lr_schedule!r} (expected None or 'cosine').")
+        opt = self._build_optimizer([p for p in self.model.parameters() if p.requires_grad])
+        lr_sched = self._build_scheduler(opt)
 
         # All training randomness flows through these generators (Invariant 5 resumability).
         batch_gen = make_generator(self.seed + 1, device)
@@ -455,6 +508,9 @@ class TrainingRunner(Runner):
         Visualization must never fail a run, so errors are caught and reported."""
         viz = self.visualizer
         if viz is not None and hasattr(viz, "render"):
+            out_dir = self._output_dir()
+            if out_dir is not None and hasattr(viz, "out_dir"):
+                viz.out_dir = out_dir           # land beside samples.npz, not a flat ./output
             try:
                 viz.render(x)
             except Exception as e:
@@ -522,9 +578,6 @@ class TrainingRunner(Runner):
         radius = self.eval_radius
         x = self.sample()                              # one draw, reused for render + persist + metrics
         self._render(x)
-        out_dir = self._output_dir()
-        if out_dir is not None:
-            save_samples(out_dir, x)
         held_out = self._val_batch()
         env = self.environment
         metrics: dict[str, float] = {"n": float(x.shape[0])}
@@ -538,9 +591,17 @@ class TrainingRunner(Runner):
             nearest = torch.cdist(x, means).min(dim=1).values
             metrics["mode_coverage"] = float((nearest < radius).float().mean().item())
             metrics["radius"] = float(radius)
-        if out_dir is not None:
-            save_metrics(out_dir, metrics, step=self._completed_steps)
+        self._persist_eval(x, metrics)
         return metrics
+
+    def _persist_eval(self, samples: torch.Tensor, metrics: dict) -> None:
+        """Persist an eval draw + its step-stamped metrics. Shared with PlanningRunner.evaluate so
+        both runners write the same artifacts the same way (the design contract: the runner persists
+        samples.npz + step-stamped metrics.json). Change eval persistence here, not per override."""
+        out_dir = self._output_dir()
+        if out_dir is not None:
+            save_samples(out_dir, samples)
+            save_metrics(out_dir, metrics, step=self._completed_steps)
 
     # ── checkpoint ──────────────────────────────────────────────────────────────────────────────
     def _relocate_ema(self, device: torch.device) -> None:
@@ -580,8 +641,62 @@ class TrainingRunner(Runner):
             save_checkpoint(path, ckpt)
         return ckpt
 
+    # Config fields a strict state_dict load CANNOT catch: two checkpoints can agree on every tensor
+    # SHAPE and still disagree on what the numbers MEAN. `output_type` reinterprets the same tensor
+    # as ε vs x0; `schedule` swaps the noise curve under identical weights; `environment` decides
+    # which task the plans are scored in — and locomotion siblings collide exactly here, since
+    # halfcheetah and walker2d are both transition_dim 23 (act 6 + obs 17), so their checkpoints are
+    # shape-identical and load into each other silently.
+    # NOT checked, deliberately: `sampler` (sampling a DDPM-trained model with DDIM is a legitimate
+    # choice, not a mismatch), `method` (training-only), and `preprocessor` (a kind mismatch already
+    # fails loudly — its load_state_dict KeyErrors on the wrong stat keys).
+    _CKPT_IDENTITY_KEYS = (
+        ("model", "name"),
+        ("model", "params", "output_type"),
+        ("schedule", "name"),
+        ("environment", "params", "name"),
+    )
+
+    @staticmethod
+    def _dig(cfg, path):
+        for key in path:
+            if not hasattr(cfg, "get"):
+                return None
+            cfg = cfg.get(key)
+        return cfg
+
+    def _check_checkpoint_matches_config(self, ckpt: dict) -> None:
+        """Fail loudly when a checkpoint disagrees with the experiment it is being loaded into.
+
+        Invariant 5 records the config in every checkpoint; this reads it back. Only meaningful when
+        a LIVE config exists to compare against: `resolved_config` is set solely by the CLI, so this
+        fires on the risky `forge sample experiment=X` + `ckpt_path=Y` path and auto-no-ops for
+        `from_checkpoint`, which builds FROM the checkpoint and is self-consistent by construction.
+        Pre-config checkpoints (config=None) are skipped rather than rejected.
+        """
+        live, saved = self.resolved_config, ckpt.get("config")
+        if not live or not saved:
+            return
+        bad = [
+            f"  {'.'.join(path)}: experiment={a!r} but checkpoint={b!r}"
+            for path in self._CKPT_IDENTITY_KEYS
+            for a, b in [(self._dig(live, path), self._dig(saved, path))]
+            # Only a genuine disagreement counts. A key present on one config but absent on the
+            # other (schema drift) is unknowable, not a mismatch — comparing there false-rejects a
+            # valid checkpoint. Both-present-and-differ is still caught.
+            if a is not None and b is not None and a != b
+        ]
+        if bad:
+            raise ValueError(
+                "checkpoint does not match this experiment — the weights load (shapes agree) but "
+                "would be interpreted under the wrong config:\n" + "\n".join(bad) +
+                "\nPoint runner.params.ckpt_path at this experiment's own checkpoint, or run "
+                "`forge sample checkpoint=<path.pt>` to rebuild from the checkpoint's own config."
+            )
+
     def load_state(self, ckpt: dict) -> None:
         """Restore weights + EMA + preprocessor stats from a self-contained checkpoint."""
+        self._check_checkpoint_matches_config(ckpt)
         device = torch.device(self.device)
         self.model.to(device)
         # Reconstruct LoRA adapters BEFORE loading weights so the `…base.weight`/`.A`/`.B` keys
@@ -595,6 +710,9 @@ class TrainingRunner(Runner):
             self._relocate_ema(device)
         if ckpt.get("preprocessor_state") is not None and self.preprocessor is not None:
             self.preprocessor.load_state_dict(ckpt["preprocessor_state"])
+        # The step travels in the checkpoint (Invariant 5) and save_metrics stamps with it; without
+        # this a sample-only run writes `"step": 0` and clobbers the training run's metrics.json.
+        self._completed_steps = int(ckpt.get("step", 0))
 
     @classmethod
     def from_checkpoint(cls, path: str, build_fn) -> "TrainingRunner":

@@ -35,8 +35,15 @@ BUNDLED_ENVS: tuple[str, ...] = (
     "envs.common",
     "envs.distributions",
     "envs.discrete_toy",
-    "envs.text",  # the text/LM family — registers both char_text and tinystories
+    "envs.text",  # the text/LM family — registers char_text, tinystories, and the AR ar_text
     "envs.trajectory_synth",
+    # Robotics families — one plugin unit each (experiments select the family, not the parent). Their
+    # sim/IO deps (mujoco/minari/robosuite) are imported LAZILY, so importing the adapter just fires
+    # @register and works WITHOUT the `robotics` extra; the catalog lists them regardless.
+    "envs.robotics.locomotion",
+    "envs.robotics.maze2d",
+    "envs.robotics.robomimic",
+    "envs.robotics.hf_lowdim",
 )
 
 

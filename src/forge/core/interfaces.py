@@ -205,7 +205,7 @@ class Model(nn.Module, ABC):
         raise NotImplementedError
 
     def _check_cond(self, cond) -> None:
-        """Shared guard for the ``(x, t, cond)`` contract (§7): a model with no conditioning
+        """Shared guard for the ``(x, t, cond)`` contract (the design contract): a model with no conditioning
         pathway (``cond_dim`` == 0 or unset) must REJECT a model-conditioning tensor loudly instead
         of silently dropping it. Every model's ``forward`` calls this first, so the rule and message
         live in ONE place — a new model can't reintroduce the silent-drop bug.
@@ -260,11 +260,36 @@ class Sampler(ABC):
         self.space = space
         self.control = control
         self.discretization = discretization
+        self._check_absorbing_mask_agrees(schedule, space)
         self._generator: "Optional[Generator]" = None  # set during sample(); read by stochastic steps
         # Per-sample scratch a controller may read/write across steps (e.g. accumulate a running
         # statistic). Reset at the top of sample(), cleared at the end — single-use-per-call state,
         # same non-reentrant contract as _generator (do not share one Sampler across concurrent sample() calls).
         self._context: dict = {}
+
+    @staticmethod
+    def _check_absorbing_mask_agrees(schedule, space) -> None:
+        """An absorbing schedule and its space MUST agree on which token is the mask.
+
+        Build-time, and here because __init__ is the one place that holds both (the design contract:
+        "Misconfigurations raise before a run wastes compute"). Duck-typed on the attribute, so this
+        is a capability check, not a continuous-vs-discrete branch (Invariant 1).
+
+        Why it must be loud: the schedule DERIVES a default (`num_classes - 1`) while the space
+        leaves it None, so a config that sets one and not the other disagrees silently — the prior
+        starts uniform instead of all-mask and the absorbing reverse, which only ever rewrites mask
+        tokens, then freezes 100% of them in place. It samples, it reports, it is pure noise.
+        """
+        s_mask = getattr(schedule, "mask_index", None)
+        if s_mask is None or not hasattr(space, "mask_index"):
+            return                                    # not an absorbing pairing — nothing to agree on
+        if space.mask_index != s_mask:
+            raise ValueError(
+                f"absorbing schedule mask_index={s_mask} but {type(space).__name__}.mask_index="
+                f"{space.mask_index}. They must name the SAME token: the schedule only rewrites its "
+                f"own mask, so a disagreeing space yields a prior it can never un-mask. Set "
+                f"space.params.mask_index={s_mask} (the schedule defaults to num_classes-1)."
+            )
 
     @abstractmethod
     def step(self, x: "Tensor", t: "Tensor", s: "Tensor", cond=None) -> "Tensor":

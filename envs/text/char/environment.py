@@ -56,6 +56,10 @@ class CharText:
     def decode(self, ids: torch.Tensor) -> str:
         return "".join(self.chars[int(i)] for i in ids if int(i) < self.num_chars)
 
+    def visualize(self, samples: torch.Tensor, out: str) -> str:
+        from ..render import write_transcript
+        return write_transcript(samples, self.decode, out)
+
     def sample(self, n: int, generator: Optional[torch.Generator] = None) -> torch.Tensor:
         hi = self._ids.shape[0] - self.length
         starts = torch.randint(0, hi, (n,), generator=generator)

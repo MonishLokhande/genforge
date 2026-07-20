@@ -31,7 +31,7 @@ class D4RLHdf5Adapter:
     """Reads a D4RL flat HDF5 buffer and yields canonical episode dicts."""
 
     def __init__(self, name: str, *, path: str | None = None,
-                 max_episode_steps: int = 1000, **kwargs):
+                 max_episode_steps: int = 1000):
         self.name = name
         self.distribution = name
         self.max_episode_steps = int(max_episode_steps)
@@ -53,6 +53,15 @@ class D4RLHdf5Adapter:
         import gymnasium
         prefix = str(self.distribution).split("-", 1)[0]
         return gymnasium.make(ENV_ID_MAP[prefix])
+
+    def normalized_score(self, raw_return: float) -> float:
+        """Diffuser-comparable D4RL score. The hdf5 buffer IS genuine v2 data, so the dataset half
+        passes — but ENV_ID_MAP rolls out on v5, so this RAISES until ENV_ID_MAP names the v2 env
+        (needs mujoco_py). It returns a real number the moment that env mismatch is resolved."""
+        from .normalize import d4rl_normalized_score
+        prefix = str(self.distribution).split("-", 1)[0]
+        return d4rl_normalized_score(raw_return, name=self.name, dataset_ids=self.name,
+                                     env_id=ENV_ID_MAP[prefix])
 
     def episodes(self) -> Iterator[dict]:
         import h5py

@@ -32,8 +32,15 @@ class PlanningRunner(TrainingRunner):
         h, dim = self.dataset.sample_shape
         ns, ng = self._normalize(starts), self._normalize(goals)
 
-        pins = getattr(self.method, "pin_positions", (0, -1))
+        pins = self.method.pin_positions        # no default: a planner needs a pinning method
         start_idx, goal_idx = pins[0] % h, pins[-1] % h
+        if start_idx == goal_idx:
+            raise ValueError(
+                f"plan() pins a start AND a goal, but method.pin_positions={tuple(pins)} names a "
+                f"single timestep ({start_idx} of horizon {h}) — the goal would silently overwrite "
+                f"the start and every plan would begin AT the goal. A start-pin-only model cannot "
+                f"honor a goal: pair it with a rollout runner, or train with two pins."
+            )
         mask = torch.zeros(h, dim, dtype=torch.bool)
         mask[start_idx] = True
         mask[goal_idx] = True
@@ -63,4 +70,12 @@ class PlanningRunner(TrainingRunner):
         raw_cost = getattr(control, "_raw_cost", None) if control is not None else None
         if raw_cost is not None and hasattr(raw_cost, "feasible"):
             metrics["feasible"] = float(raw_cost.feasible(plans.reshape(-1, self.dataset.dim)).float().mean().item())
+
+        # This override replaces TrainingRunner.evaluate wholesale, so a configured `metric` and the
+        # samples/metrics artifacts are only honored if we do it here too — otherwise `+metric=...`
+        # is built, injected, and silently produces nothing (the design contract: the runner persists both).
+        # Planning has no held-out split, so pass held_out=None (a data-driven metric would need one).
+        if self.metric is not None:
+            metrics.update(self.metric(samples=plans, held_out=None))
+        self._persist_eval(plans, metrics)          # shared persistence — stays in lockstep with base eval
         return metrics

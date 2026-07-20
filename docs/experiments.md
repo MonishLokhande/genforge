@@ -79,7 +79,47 @@ A continuous trajectory diffuser for sequential planning.
 
 ---
 
-## 2. Evaluation & metrics
+## 2. Running a variant — no code required
+
+A bundled experiment is a *starting* recipe. Three ways run it with different values, none of
+which touch Python:
+
+**Override a value.** Append Hydra `key.path=value` pairs after the `experiment=` selection. A
+key the recipe already sets is replaced in place:
+
+```bash
+uv run forge train experiment=distributions/ddpm/base seed=1 runner.params.amp=true
+```
+
+A key the leaf does *not* already set must be **added** with a `+` prefix — configs run in struct
+mode, so a bare `method.params.q=8.0` on a recipe whose method ships `params: {}` fails loudly
+instead of inventing the key:
+
+```bash
+uv run forge train experiment=... +method.params.q=8.0        # add a knob the recipe omits
+```
+
+Values are type-coerced (`=true` → bool, `=null` → None, `=8.0` → float); quote anything with
+commas, brackets, or spaces so neither the shell nor Hydra splits it — `'model.params.dims=[64,64]'`.
+
+**Swap a component.** Each selectable category — `space`, `schedule`, `criterion`, `model`,
+`method`, `cost`, `control`, `sampler`, `preprocessor`, `visualizer`, `metric`, `runner` — has a
+config group under `src/forge/configs/<category>/`. Name a different leaf and the builder
+constructs that class instead:
+
+```bash
+uv run forge train experiment=distributions/ddpm/base sampler=ddim   # DDPM recipe, DDIM reverse
+```
+
+(`environment` and `dataset` have no group — they are declared inline per experiment.)
+
+**Save it as a leaf.** For a variant you want to keep, write a small delta file that inherits a
+family base and states only what changed — exactly how the bundled `distributions/ddpm/huber` leaf
+swaps the loss `criterion` MSE → Huber and inherits the rest (see §5).
+
+---
+
+## 3. Evaluation & metrics
 
 Every run **scores and persists** its output. `evaluate()` draws one sample batch, writes it to
 `output/<…>/samples.npz` (the path mirrors the run's `ckpt_path`), scores it with the configured
@@ -122,7 +162,7 @@ no split):
 
 ---
 
-## 3. Logging & performance
+## 4. Logging & performance
 
 Logging is off by default and its dependencies are optional:
 
@@ -154,9 +194,43 @@ scaler — checkpoint format and resume are unchanged. Works on both CUDA and CP
 uv run forge train experiment=distributions/ddpm/base runner.params.amp=true
 ```
 
+### Optimizer & LR schedule
+
+The optimizer is a set of `runner.params` knobs. The **defaults track the reference recipes**
+(AdamW with decay on every parameter); the modern-transformer choices — 1-D exclusion, `β₂`, warmup
+— are opt-in.
+
+| Knob | Default | What it does |
+| --- | --- | --- |
+| `optimizer` | `adamw` | `adamw` decouples weight decay from the adaptive step; `adam` folds it into the gradient as coupled L2 (and **warns** when `weight_decay>0`). |
+| `weight_decay` | `0.0` | Decay strength — decoupled under `adamw`, coupled L2 under `adam`. |
+| `decay_1d` | `true` | Whether 1-D params (biases, LayerNorm/RMSNorm gains) are decayed too. Set `false` for the nanoGPT convention (decay matrices only). Only bites when `weight_decay>0`. |
+| `betas` | `[0.9, 0.999]` | Adam/AdamW moments. Transformer training usually wants `β₂≈0.95`. |
+| `warmup_steps` | `0` | Linear LR warmup before the schedule — transformers usually need it for early stability. |
+| `lr_schedule` | `null` | `null` (flat) or `cosine` (anneal to `lr·lr_min_ratio`); warmup, if set, prefixes it. |
+
+```bash
+# AdamW, exclude 1-D params from decay, transformer betas, 500-step warmup + cosine
+uv run forge train experiment=text/char/d3pm/small \
+  runner.params.weight_decay=0.1 runner.params.decay_1d=false \
+  'runner.params.betas=[0.9,0.95]' runner.params.warmup_steps=500 \
+  runner.params.lr_schedule=cosine
+```
+
+!!! note "`optimizer=adam` folds weight decay into the gradient"
+    Plain Adam applies `weight_decay` as coupled L2 on the gradient, which interacts poorly with
+    Adam's per-parameter scaling — the problem AdamW (2019) exists to fix. The runner **warns** when
+    you pair `optimizer=adam` with `weight_decay>0`; prefer the default `adamw`. Need a different
+    optimizer entirely (SGD, Lion, …)? [Register your own runner](extending.md#adding-a-runner-custom-loop-or-optimizer)
+    — a ~5-line `_build_optimizer` override — so the base one stays two-choice.
+
+These knobs live on the base training runner, so every runner shares them. The `policy_training` /
+`planning` config leaves list only a subset, so on those add one with `+runner.params.<knob>=…` (or
+set it in the experiment leaf) exactly as you would any key the leaf omits.
+
 ---
 
-## 4. Config layout
+## 5. Config layout
 
 The configuration tree separates framework defaults from experiment recipes:
 
@@ -180,5 +254,5 @@ experiment/                       # the experiment tree
 ```
 
 * **Inline environments** — a leaf declares its `environment`/`dataset` inline (e.g. `environment: {name: tinystories, params: {batch_size: 64}}`) and loads the plugin package via its `plugins:` field.
-* **Defaults** — a leaf only states overrides; anything omitted falls back to the defaults in `src/forge/configs/`.
+* **Base + delta** — every file is marked `# @package _global_`. A family `base.yaml` assembles the run by selecting one option per group in its `defaults:` list (`- /schedule: vp_cosine`, `- /model: temporal_unet_janner`, colon form), ending with `- _self_`. A leaf inherits that base by listing its absolute path — `- /experiment/<env>/<family>/base` (slash path, no `.yaml`) — again with `- _self_` **last** so the leaf's own values win, and states only the deltas. To replace a group the base already chose, use the `override` keyword: `- override /sampler: ddim`. Anything omitted falls back to the defaults in `src/forge/configs/`.
 * **Experiment root** — the tree is located via the `GENFORGE_EXP_ROOT` environment variable; if unset, the current working directory is used.

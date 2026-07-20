@@ -63,14 +63,22 @@ class AmortizedValueController(Controller):
 
     def modify_x0(self, x0_hat: torch.Tensor, x: torch.Tensor, t, schedule, cond=None, context=None) -> torch.Tensor:
         self._load()
+        # The Model contract is forward(x, t, cond=None) and value nets are noise-level aware, so t
+        # is REQUIRED — value_mlp happens to accept and ignore it, but e.g. value_unet does not.
+        # Samplers pass t as a scalar or a per-sample tensor; broadcast to the batch either way.
+        tt = torch.as_tensor(t, device=x0_hat.device, dtype=torch.float32).reshape(-1)
+        if tt.numel() == 1:
+            tt = tt.expand(x0_hat.shape[0])
         with torch.enable_grad():
             z = x0_hat.detach().requires_grad_(True)
-            v = self._value(z).sum()
+            v = self._value(z, tt).sum()
             (grad,) = torch.autograd.grad(v, z)
         step = self.scale * self.sign
         if self.sigma_weight:
-            sigma = torch.as_tensor(schedule.sigma(t), device=x0_hat.device)
-            step = step * sigma**2
+            # σ(t) is per-sample when t is; reshape to (B, 1, …) so it broadcasts against x̂₀ of any
+            # rank — a bare (B,) sigma collides with the feature dim on trajectories (B, H, D).
+            sigma = torch.as_tensor(schedule.sigma(tt), device=x0_hat.device)
+            step = step * sigma.reshape(-1, *([1] * (x0_hat.dim() - 1))) ** 2
         return x0_hat + step * grad
 
 

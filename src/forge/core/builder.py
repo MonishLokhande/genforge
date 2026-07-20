@@ -89,6 +89,7 @@ _BUILTIN_MODULES: tuple[str, ...] = (
     "forge.methods.conditional",
     "forge.visualizations.trajectory",
     "forge.visualizations.scatter",
+    "forge.visualizations.env_render",
     "forge.metrics.distribution",
     "forge.metrics.coverage",
     "forge.metrics.likelihood",
@@ -161,7 +162,6 @@ def match_init_kwargs(cls: type, pool: dict[str, Any], params: dict) -> dict:
     so that pool objects matching parent params (e.g. model/method in TrainingRunner) are injected.
     MRO walk only when **kwargs present — keeps the common fast-path cheap.
     """
-    import inspect as _inspect
     sig = inspect.signature(cls.__init__)
     pnames: set[str] = set(sig.parameters)
     # If **kwargs is declared, collect injectable names from ancestor __init__ signatures too.
@@ -171,7 +171,7 @@ def match_init_kwargs(cls: type, pool: dict[str, Any], params: dict) -> dict:
             if parent_init is None:
                 continue
             try:
-                parent_sig = _inspect.signature(parent_init)
+                parent_sig = inspect.signature(parent_init)
             except (ValueError, TypeError):
                 continue
             pnames |= set(parent_sig.parameters)

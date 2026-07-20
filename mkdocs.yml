@@ -85,4 +85,5 @@ nav:
   - Installation: installation.md
   - Architecture: architecture.md
   - Experiments: experiments.md
+  - Examples: examples.md
   - Extending: extending.md

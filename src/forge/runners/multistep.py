@@ -182,6 +182,7 @@ class PolicyWrapper:
         sample_shape: tuple,
         n_sample_steps: int = 100,
         ema=None,
+        sample_seed: int | None = None,
     ) -> None:
         horizon = sample_shape[0]
         if n_obs_steps - 1 + n_action_steps > horizon:
@@ -196,6 +197,24 @@ class PolicyWrapper:
         self.sample_shape = tuple(sample_shape)
         self.n_sample_steps = int(n_sample_steps)
         self.ema = ema
+        # Seeding the ENV alone is not reproducibility: every action chunk is DRAWN by the reverse
+        # process, so an unseeded sampler re-rolls the plan each run and the same checkpoint scores
+        # differently. None = keep the old unseeded draw (callers that never seed are unaffected).
+        self.sample_seed = None if sample_seed is None else int(sample_seed)
+        self._gen: "torch.Generator | None" = None
+
+    def seed_episode(self, ep: int) -> None:
+        """Re-seed the plan noise for episode ``ep``. Call at every env reset.
+
+        A fresh generator per episode, derived from ``(sample_seed, ep)`` — so noise still varies
+        across replans and across episodes, but a rollout is reproducible. Deriving from ``ep``
+        rather than letting one generator run means episode e cannot inherit the generator POSITION
+        left by however many replans episode e-1 happened to need.
+        """
+        if self.sample_seed is None:
+            return
+        from ..utils.seeding import make_generator
+        self._gen = make_generator(self.sample_seed + int(ep), self.device())
 
     def device(self):
         return next(self.sampler.model.parameters()).device
@@ -239,7 +258,8 @@ class PolicyWrapper:
             self.ema.copy_to(model)
         try:
             with torch.no_grad():
-                result = self.sampler.sample(shape, self.n_sample_steps, cond=cond)
+                result = self.sampler.sample(shape, self.n_sample_steps, cond=cond,
+                                             generator=self._gen)
         finally:
             if self.ema is not None:
                 self.ema.restore(model)

@@ -1,14 +1,31 @@
 # @package _global_
-# Tier A locomotion diffuser: Janner action-first x=[a|s] trajectory diffusion, goal-conditioned
-# at sample time via the Pin controller (genforge collapsed inpainting into conditional+Pin, Inv 6).
-# Leaves set env name + obs_dim/action_dim (hence model.transition_dim) only.
+# Tier A locomotion diffuser: Janner action-first x=[a|s] trajectory diffusion. Leaves set env
+# name + obs_dim/action_dim (hence model.transition_dim) only.
+#
+# NOT goal-conditioned — this is the one trajectory family that isn't, so it does NOT get maze2d's
+# `planning` runner. Diffuser locomotion pins the CURRENT state (pin_positions: [0]) and picks
+# among candidates with a learned value head; there is no goal to pin, and `planning` reads
+# pins[0]/pins[-1] as (start, goal) — with a single pin those alias, so the goal overwrites the
+# start. `training` trains the planner and stops there, which is exactly Diffuser's split: train
+# planner -> train value -> eval. The value-guided receding-horizon rollout (the eval that carries
+# the real number) lives in experiment/robotics/locomotion/guided_planning.py; it needs a value
+# checkpoint this planner recipe never names, so NO in-repo runner drives it — `forge train` here
+# reports only `{"n": ...}` (MinariAdapter has no evaluate()), and scoring a locomotion checkpoint
+# currently requires an out-of-repo harness that constructs GuidedLocomotionEval itself.
+#
+# KNOWN BROKEN (measured 2026-07-17): this vp_linear + temporal_unet_janner recipe trains to a
+# converged loss and a good DENSITY model (unconditional marginals match the data, pins are honored
+# exactly, actions land in range) but the resulting planner CANNOT control the system — hopper
+# returns ~4 raw (falls in ~4 steps) vs ~2772 for the vp_cosine + attention_unet leaves in this same
+# dir. Ruled out: value-guidance pairing (unguided is equally bad), sampling-step count (20/200/1000
+# identical), EMA, conditioning, prior mismatch. Root cause NOT yet found. Use the attention_ddpm
+# leaves for locomotion until this is resolved.
 defaults:
   - /space: euclidean
   - /schedule: vp_linear
-  - /model: temporal_unet_janner
   - /method: conditional
   - /sampler: ddpm
-  - /runner: planning
+  - /runner: training
   - _self_
 
 plugins:
@@ -28,7 +45,11 @@ dataset:
     include_actions: true
     stride: 1
 
+# Model selected inline (name:), NOT via a `/model` group default, so a leaf can swap the class
+# with its own inline `name:` — no repo-root `model/` group leaf, no janner-param leak (the class
+# defaults cond_dim/cond_predict_scale/obs_dim = 0/false/0, so they need no restating here).
 model:
+  name: temporal_unet_janner
   params:
     horizon: ${horizon}
     dim: 32

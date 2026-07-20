@@ -100,8 +100,3 @@ def registered() -> dict[str, dict[str, type]]:
         if category not in ordered:
             ordered[category] = dict(sorted(_REGISTRY[category].items()))
     return ordered
-
-
-def clear() -> None:
-    """Empty the registry. For test isolation only."""
-    _REGISTRY.clear()

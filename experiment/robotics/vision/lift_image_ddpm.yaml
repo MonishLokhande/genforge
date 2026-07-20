@@ -1,0 +1,80 @@
+# @package _global_
+# Robomimic lift (ph, IMAGE) — vision-conditioned closed-loop diffusion policy.
+#
+# Same recipe as can_image_ddpm (identical dims: horizon 16, action_dim 7, proprio_dim 9, 2 cams);
+# only the environment/dataset differs. See can_image_ddpm.yaml for why the groups are composed
+# directly (robomimic/base pins `/model: temporal_unet_janner`) and why obs_keys is explicit.
+#
+# Inv 9: images + proprio ride in `cond` and NEVER cross the membrane. The membrane (minmax)
+# normalizes only x = actions; proprio is normalized in-model by VisionUNet.obs_normalizer.
+defaults:
+  - /space: euclidean
+  - /schedule: vp_cosine
+  - /method: ddpm
+  - /sampler: ddpm
+  - /preprocessor: minmax
+  - /runner: policy_training
+  - _self_
+
+plugins:
+  - envs.robotics.robomimic
+  - experiment.robotics.vision      # registers temporal_unet_image / vision_unet
+
+horizon: 16
+n_obs_steps: 2
+n_action_steps: 8
+action_dim: 7         # OSC pose deltas (6) + gripper (1)
+proprio_dim: 9        # eef_pos(3) + eef_quat(4) + gripper_qpos(2) — no "object"
+
+environment:
+  name: robomimic
+  params:
+    name: lift_ph
+    path: data/robomimic/lift/ph/image_v15.hdf5
+    obs_keys: [robot0_eef_pos, robot0_eef_quat, robot0_gripper_qpos]
+    image_keys: [agentview_image, robot0_eye_in_hand_image]   # camera ORDER is checkpoint-frozen
+
+dataset:
+  name: trajectory_window
+  params:
+    horizon: ${horizon}
+    layout: actions_only
+    include_actions: false
+    pad_before: ${sub:${n_obs_steps},1}
+    pad_after: ${sub:${n_action_steps},1}
+    stride: 1
+    n_obs_steps: ${n_obs_steps}
+
+model:
+  name: temporal_unet_image
+  params:
+    horizon: ${horizon}
+    transition_dim: ${action_dim}
+    n_obs_steps: ${n_obs_steps}
+    n_cam: 2
+    proprio_dim: ${proprio_dim}
+    image_feat_dim: 64
+    dim: 256
+    dim_mults: [1, 2, 4]
+    cond_predict_scale: true
+    output_type: eps
+
+sampler:
+  params:
+    clip_denoised: true   # as trained; also REQUIRED for eps+vp_cosine over minmax→[-1,1]
+
+runner:
+  params:
+    steps: 100000
+    batch_size: 64
+    lr: 1.0e-4
+    weight_decay: 1.0e-6
+    ema_decay: 0.9999
+    n_obs_steps: ${n_obs_steps}
+    n_action_steps: ${n_action_steps}
+    n_rollout_episodes: 20
+    n_sample_steps: 100
+    max_episode_steps: 500
+    device: cuda
+    seed: 0
+    ckpt_path: checkpoints/robotics/robomimic/lift/image_ddpm.pt

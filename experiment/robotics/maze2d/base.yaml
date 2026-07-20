@@ -5,7 +5,11 @@
 # Leaves set only horizon (dataset+model) and env dataset alias.
 defaults:
   - /space: euclidean
-  - /schedule: vp_linear
+  # vp_cosine, NOT vp_linear: the trained maze2d planners (2M steps) all record vp_cosine in their
+  # embedded config. Pinning vp_linear here loaded those weights into the wrong noise curve — same
+  # tensor shapes, so nothing raised; `forge sample checkpoint=<pt>` (which rebuilds from the
+  # checkpoint's own config) and `forge sample experiment=...` silently disagreed.
+  - /schedule: vp_cosine
   - /model: temporal_unet_janner
   - /method: conditional
   - /sampler: ddpm

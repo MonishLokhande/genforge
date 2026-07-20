@@ -33,7 +33,7 @@ def maze2d_set_terminals(episode: dict, threshold: float = 0.5) -> dict:
 class Maze2DAdapter:
     """Maze2D adapter: loads pointmaze, drops Minari's terminal-overlap step, tags goal terminals."""
 
-    def __init__(self, name: str = DEFAULT, terminal_threshold: float = 0.5, **kwargs):
+    def __init__(self, name: str = DEFAULT, terminal_threshold: float = 0.5):
         self.name = name
         self.distribution = name
         self.terminal_threshold = float(terminal_threshold)

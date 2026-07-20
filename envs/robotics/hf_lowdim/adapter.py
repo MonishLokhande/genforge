@@ -1,10 +1,16 @@
-"""Low-dimensional adapter for HuggingFace-hosted (lerobot-format) datasets.
+"""Adapter for HuggingFace-hosted (lerobot-format) datasets — lowdim, optionally + images.
 
 Loads the tabular columns of a lerobot-format dataset via plain HF ``datasets``
-(parquet-backed; video columns are NOT decoded — lowdim only), splits episodes on
-the ``episode_index`` column, and builds the matching gymnasium env (gym-pusht /
-gym-aloha) for rollout. The ``lerobot`` package is not used or required — only
-``datasets`` + the gym env package.
+(parquet-backed), splits episodes on the ``episode_index`` column, and builds the
+matching gymnasium env (gym-pusht / gym-aloha) for rollout. The ``lerobot`` package
+is not used or required — only ``datasets`` + the gym env package.
+
+Images are OPT-IN via ``image_keys`` (default None = lowdim only, the historical
+behavior). When set, ``episodes()`` also yields ``"images"`` (T, n_cam, C, H, W) uint8
+and ``stack_env_images`` serves the rollout side — the pair of hooks
+``forge.runners.policy_training`` duck-types on. Setting ``image_keys`` for a PushT repo
+also requires the env to hand back pixels, hence the ``pixels_agent_pos`` obs_type in
+:data:`LEROBOT_ENV_SPECS` for ``lerobot/pusht_image``.
 
 Named ``hf_lowdim`` (registered as ``("environment", "hf_lowdim")``) because it is
 a generic loader: the ``lerobot`` package is neither used nor required.
@@ -32,7 +38,10 @@ from forge.core.registry import register
 LEROBOT_ENV_SPECS: dict[str, tuple[str, dict]] = {
     "lerobot/pusht": ("gym_pusht/PushT-v0", {"obs_type": "environment_state_agent_pos"}),
     "lerobot/pusht_keypoints": ("gym_pusht/PushT-v0", {"obs_type": "environment_state_agent_pos"}),
-    "lerobot/pusht_image": ("gym_pusht/PushT-v0", {"obs_type": "environment_state_agent_pos"}),
+    # The IMAGE repo must build a PIXEL env — obs_type carries {"pixels", "agent_pos"}, matching
+    # the trained checkpoint's embedded env_kwargs. A lowdim obs_type here silently rolls a vision
+    # policy out on state vectors.
+    "lerobot/pusht_image": ("gym_pusht/PushT-v0", {"obs_type": "pixels_agent_pos"}),
     "lerobot/aloha_sim_insertion_human": ("gym_aloha/AlohaInsertion-v0", {}),
     "lerobot/aloha_sim_insertion_scripted": ("gym_aloha/AlohaInsertion-v0", {}),
     "lerobot/aloha_sim_transfer_cube_human": ("gym_aloha/AlohaTransferCube-v0", {}),
@@ -44,6 +53,9 @@ OBS_KEY_TO_ENV_KEY: dict[str, str] = {
     "observation.environment_state": "environment_state",
     "observation.state": "agent_pos",
 }
+
+# Image dataset column → env pixel key (gym-pusht ``obs_type="pixels_agent_pos"``).
+IMAGE_KEY_TO_ENV_KEY: dict[str, str] = {"observation.image": "pixels"}
 
 
 @register("environment", "hf_lowdim")
@@ -67,15 +79,18 @@ class HFLowdimAdapter:
         *,
         repo_id: str | None = None,
         obs_keys: Sequence[str] = ("observation.state",),
+        image_keys: Sequence[str] | None = None,
         env_id: str | None = None,
         env_kwargs: dict | None = None,
         dataset=None,
-        **kwargs,
     ):
         self.name = name
         self.repo_id = repo_id or name
         self.distribution = self.repo_id.split("/")[-1]  # runner.ckpt_key() reads this
         self.obs_keys = list(obs_keys)
+        # Image columns (e.g. observation.image). When set, episodes() also yields
+        # "images" (T, n_cam, C, H, W) uint8; default None = low-dim only.
+        self.image_keys = list(image_keys) if image_keys is not None else None
         spec_env_id, spec_kwargs = LEROBOT_ENV_SPECS.get(self.repo_id, (None, {}))
         self.env_id = env_id or spec_env_id
         self.env_kwargs = {**spec_kwargs, **(env_kwargs or {})}
@@ -179,7 +194,7 @@ class HFLowdimAdapter:
             timeouts = np.zeros(T, dtype=bool)
             timeouts[-1] = not terminals[-1]
 
-            yield {
+            episode = {
                 "observations": observations,
                 "actions": actions,
                 "rewards": rewards,
@@ -189,6 +204,47 @@ class HFLowdimAdapter:
                     [observations[1:], observations[-1:]], axis=0
                 ),
             }
+            if self.image_keys:
+                episode["images"] = self.read_images(hf_slice, T)
+            yield episode
+
+    def read_images(self, hf_slice: dict, T: int) -> np.ndarray:
+        """Stack image columns into channels-first ``(T, n_cam, C, H, W)`` uint8.
+
+        lerobot stores frames as ``(H, W, C)`` uint8 per row (PIL or ndarray). Paired with
+        `stack_env_images` so ONE object owns camera order + layout on both the dataset and the
+        rollout side — that pairing is what keeps train and rollout from skewing.
+        """
+        cams = []
+        for key in self.image_keys:
+            if key not in hf_slice:
+                raise KeyError(
+                    f"Image column '{key}' not in dataset. Available: {list(hf_slice.keys())}"
+                )
+            frames = np.stack([np.asarray(im) for im in hf_slice[key]])[:T]   # (T, H, W, C)
+            if frames.ndim != 4 or frames.shape[-1] not in (1, 3):
+                raise ValueError(f"image column '{key}' expected (T,H,W,C), got {frames.shape}")
+            cams.append(np.moveaxis(frames, -1, 1))          # (T, C, H, W)
+        return np.stack(cams, axis=1).astype(np.uint8)       # (T, n_cam, C, H, W)
+
+    def stack_env_images(self, obs) -> np.ndarray:
+        """A single env obs dict → ``(n_cam, C, H, W)`` uint8, in ``image_keys`` order.
+
+        The rollout counterpart of `read_images`. For gym-pusht the pixel obs lives under
+        ``"pixels"`` (obs_type ``pixels_agent_pos``). `policy_training` picks this up via
+        getattr and passes it as MultiStepWrapper's ``image_transform``.
+        """
+        cams = []
+        for key in self.image_keys or ():
+            env_key = IMAGE_KEY_TO_ENV_KEY.get(key, key)
+            if isinstance(obs, dict) and env_key not in obs:
+                raise KeyError(
+                    f"Env observation missing image key '{env_key}' (mapped from '{key}'). "
+                    f"Available: {list(obs.keys())}. Was the env built with a pixel obs_type?"
+                )
+            arr = np.asarray(obs[env_key] if isinstance(obs, dict) else obs)
+            cams.append(np.moveaxis(arr, -1, 0))             # (C, H, W)
+        return np.stack(cams, axis=0).astype(np.uint8)
 
 
-__all__ = ["HFLowdimAdapter", "LEROBOT_ENV_SPECS", "OBS_KEY_TO_ENV_KEY"]
+__all__ = ["HFLowdimAdapter", "LEROBOT_ENV_SPECS", "OBS_KEY_TO_ENV_KEY", "IMAGE_KEY_TO_ENV_KEY"]

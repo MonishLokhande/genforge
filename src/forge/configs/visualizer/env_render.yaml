@@ -1,0 +1,2 @@
+name: env_render
+params: {}   # dispatches to the environment's own visualize(samples, out); out_dir overridable

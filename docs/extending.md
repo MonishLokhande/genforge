@@ -39,6 +39,72 @@ builder injects `schedule`/`space` automatically if your `__init__` names them.
 - **as a plugin:** keep the file in your own package, declare `plugins: [your_pkg.models]` in the
   experiment, and select `model: {name: mynet, params: {...}}`. No fork of forge.
 
+## Adding your own algorithm (method / sampler / schedule / control)
+
+The examples above are infrastructure; the generative machinery joins the same way. Integration
+stays free — one `@register` class plus an optional leaf, no wiring — so the real cost is the
+algorithm itself, which the spec targets at ~30–60 readable lines for a space, schedule, method,
+sampler, or controller (the shipped ones bear this out: `ddim.py` 45 lines, `guidance.py` 35). A new
+sampler implements one reverse increment and stays output-type-agnostic by going through the
+schedule (Invariant 3):
+
+```python
+from forge.core.interfaces import Sampler
+from forge.core.registry import register
+
+@register("sampler", "my_sampler")
+class MySampler(Sampler):                       # __init__(model, schedule, space, control=None) injected
+    def step(self, x, t, s, cond=None):
+        x0 = self.schedule.x0_from_eps(x, self.model(x, t, cond), t)   # works for any output_type
+        ...                                                            # one increment x_t -> x_s
+        return x_s
+```
+
+- **in-tree:** drop it in `src/forge/samplers/`, add the module to `_BUILTIN_MODULES` in
+  `src/forge/core/builder.py`, add a `src/forge/configs/sampler/my_sampler.yaml` leaf.
+- **as a plugin:** keep it in your package, declare `plugins: [your_pkg.samplers]`, select
+  `sampler: {name: my_sampler, params: {...}}`. No fork of forge.
+
+`method`, `schedule`, and `space` follow the identical shape against their contracts in
+`core/interfaces.py`. A **controller** adds two things: it declares `surface = "x0" | "drift"` and
+implements the matching `modify_x0` / `modify_drift`, and its `prepare(preprocessor)` maps the cost
+into normalized coordinates at sample time (Invariant 8) — see `src/forge/control/` for worked
+controllers. What none of them may break is the invariants they run under (§3): normalized
+coordinates inside the membrane, no continuous/discrete branching outside `space`/`schedule`, and
+output-type conversions only through the schedule.
+
+## Adding a runner (custom loop or optimizer)
+
+The runner owns the lifecycle — fit the membrane, train, checkpoint, sample, evaluate — and it is a
+registered component like everything else: `@register("runner", name)`, discovered by the builder,
+selected with `runner=<name>`. The bundled runners show the pattern: `PlanningRunner` and
+`PolicyTrainingRunner` subclass `TrainingRunner` and override only what differs (goal-conditioned
+sampling; rollout evaluation).
+
+Most training-loop tweaks are a small subclass, not a rewrite, because `TrainingRunner` exposes
+seams. A different **optimizer** — SGD, Lion, an 8-bit AdamW — is the canonical case: override
+`_build_optimizer`, nothing else.
+
+```python
+import torch
+from forge.core.registry import register
+from forge.runners.training import TrainingRunner
+
+@register("runner", "sgd_training")
+class SGDTrainingRunner(TrainingRunner):
+    def _build_optimizer(self, params):        # params = the trainable params the base already filtered
+        return torch.optim.SGD(params, lr=self.lr, momentum=0.9, weight_decay=self.weight_decay)
+```
+
+Select it with `runner=sgd_training`; checkpointing, EMA, warmup/schedule, and resume are inherited
+unchanged. This is why the built-in optimizer knob stays deliberately two-choice (`adam`/`adamw`): a
+third optimizer is a five-line runner, not another branch in the core loop.
+
+- **in-tree:** drop it in `src/forge/runners/`, add the module to `_BUILTIN_MODULES` in
+  `src/forge/core/builder.py`, add a `src/forge/configs/runner/sgd_training.yaml` leaf.
+- **as a plugin:** keep it in your package, declare `plugins: [your_pkg.runners]`, select
+  `runner: {name: sgd_training, params: {...}}`. No fork of forge.
+
 ## Adding a metric
 
 A metric implements the `Metric` contract — `__call__(samples, held_out) -> {name: float}` — and

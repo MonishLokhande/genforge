@@ -7,8 +7,7 @@ Importing this package registers the environment (``.environment``) and the wind
 
 from .dataset import TrajectoryDataset as Dataset
 from .environment import SyntheticTrajectories
-from .processor import WindowingProcessor as Processor
 
 Environment = SyntheticTrajectories
 
-__all__ = ["Environment", "Dataset", "Processor", "SyntheticTrajectories"]
+__all__ = ["Environment", "Dataset", "SyntheticTrajectories"]

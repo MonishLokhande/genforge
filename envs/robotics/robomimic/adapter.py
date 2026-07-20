@@ -127,7 +127,6 @@ class RobomimicAdapter:
         obs_keys: Sequence[str] | None = None,
         image_keys: Sequence[str] | None = None,
         filter_key: str | None = None,
-        **kwargs,
     ):
         self.name = name
         self.path = path or name
@@ -251,24 +250,40 @@ class RobomimicAdapter:
         return self.env_meta
 
     def ensure_obs_utils(self) -> None:
-        """Initialize robomimic's global obs-modality registry if it is unset.
+        """Register THIS adapter's obs modalities in robomimic's global registry.
 
         ``EnvRobosuite.get_observation()`` indexes the module global
         ``ObsUtils.OBS_KEYS_TO_MODALITIES``, which stays ``None`` until a
         robomimic training/eval pipeline calls one of its ``initialize_obs_*``
         helpers. Building an env standalone (as we do) skips that, so the first
         ``reset()`` crashes with ``argument of type 'NoneType' is not iterable``
-        (env_robosuite.py: ``k in None``). Registering the low-dim obs keys here
-        is the missing initialization — not a robosuite-version workaround. Only
-        runs when unset, so it never clobbers a real robomimic training setup."""
+        (env_robosuite.py: ``k in None``). Registering the obs keys here is the
+        missing initialization — not a robosuite-version workaround.
+
+        Keyed on whether the global already maps OUR keys, NOT on whether it is
+        unset: the registry is process-global, so the first adapter to build an
+        env used to win it for the whole process. A lowdim run followed by an
+        image run in one process (any benchmark sweep does exactly this) left
+        ``rgb`` unregistered, and the cameras were then dropped from the env
+        observation. Re-initializing is a no-op whenever the mapping already
+        satisfies us, so an equivalent setup is still never clobbered."""
         import robomimic.utils.obs_utils as ObsUtils
-        if ObsUtils.OBS_KEYS_TO_MODALITIES is None:
-            keys = list(self.obs_keys) if self.obs_keys is not None else list(DEFAULT_LOW_DIM_KEYS)
-            mapping: dict[str, list[str]] = {"low_dim": keys}
-            if self.image_keys is not None:
-                # Without an `rgb` entry EnvRobosuite.get_observation() mishandles the camera keys.
-                mapping["rgb"] = list(self.image_keys)
-            ObsUtils.initialize_obs_modality_mapping_from_dict(mapping)
+        keys = list(self.obs_keys) if self.obs_keys is not None else list(DEFAULT_LOW_DIM_KEYS)
+        mapping: dict[str, list[str]] = {"low_dim": keys}
+        if self.image_keys is not None:
+            # Without an `rgb` entry EnvRobosuite.get_observation() mishandles the camera keys.
+            mapping["rgb"] = list(self.image_keys)
+        current = ObsUtils.OBS_KEYS_TO_MODALITIES or {}     # key -> modality
+        if any(current.get(k) != modality for modality, ks in mapping.items() for k in ks):
+            # MERGE, don't clobber: initialize_* REPLACES the process-global map, so registering
+            # only our keys would drop a live sibling adapter's modalities (rgb especially → the
+            # other env silently loses its cameras). Fold our keys into the existing union; ours
+            # wins on a per-key modality conflict.
+            combined = {**current, **{k: mod for mod, ks in mapping.items() for k in ks}}
+            union: dict[str, list[str]] = {}
+            for k, mod in combined.items():
+                union.setdefault(mod, []).append(k)
+            ObsUtils.initialize_obs_modality_mapping_from_dict(union)
 
     def build_env(self):
         try:

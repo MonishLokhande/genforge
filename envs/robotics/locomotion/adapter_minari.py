@@ -43,7 +43,7 @@ def extract_observations(obs) -> np.ndarray:
 class MinariAdapter:
     """Format-pure Minari adapter. No env-specific branches live here."""
 
-    def __init__(self, name: str, **kwargs):
+    def __init__(self, name: str):
         self.name = name
         self.distribution = name      # ckpt-key provenance
         try:
@@ -59,6 +59,13 @@ class MinariAdapter:
 
     def build_env(self):
         return self.datasets[0].recover_environment()
+
+    def normalized_score(self, raw_return: float) -> float:
+        """Diffuser-comparable D4RL score — RAISES here, always: this adapter's data is a Farama
+        Minari re-recording (``self.ids`` end -v0), not the D4RL v2 dataset the reference constants
+        assume, so no comparable score exists. Report the raw rollout return instead."""
+        from .normalize import d4rl_normalized_score
+        return d4rl_normalized_score(raw_return, name=self.name, dataset_ids=self.ids)
 
     def episodes(self) -> Iterator[dict]:
         for dataset in self.datasets:

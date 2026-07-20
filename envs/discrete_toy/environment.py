@@ -44,6 +44,11 @@ class CategoricalToy:
         counts = torch.bincount(
             samples.reshape(-1), minlength=self.num_classes
         )[: self.num_classes].to(torch.float32)
-        emp = counts / counts.sum().clamp_min(1)
+        # Divide by ALL tokens, not just the ones that landed in a data class. The slice above drops
+        # any MASK bin (absorbing schedules use index num_classes); renormalizing over the survivors
+        # would rescale them back to sum 1 and report a perfect freq_l1 on a mostly-unresolved
+        # sample. Dividing by the true token count lets leftover masks depress every frequency, so
+        # they show up in the metric instead of vanishing from it.
+        emp = counts / max(samples.numel(), 1)
         l1 = float((emp - self.probs.to(emp.device)).abs().sum().item())
         return {"freq_l1": l1, "n": float(samples.numel()), "num_classes": float(self.num_classes)}

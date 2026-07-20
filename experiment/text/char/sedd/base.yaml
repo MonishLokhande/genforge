@@ -9,6 +9,7 @@ defaults:
   - /method: sedd
   - /sampler: sedd
   - /runner: training
+  - /visualizer: env_render      # decode generated tokens → a readable samples.txt (via env.visualize)
   - _self_
 
 plugins:

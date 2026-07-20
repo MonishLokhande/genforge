@@ -8,6 +8,7 @@ defaults:
   - /method: d3pm
   - /sampler: tau_leaping
   - /runner: training
+  - /visualizer: env_render      # decode generated tokens → a readable samples.txt (via env.visualize)
   - _self_
 
 plugins:

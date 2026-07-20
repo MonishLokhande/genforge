@@ -76,6 +76,10 @@ class TinyStories:
         enc = tiktoken.get_encoding("gpt2")
         return enc.decode([int(i) for i in ids if int(i) < self.NUM_DATA])
 
+    def visualize(self, samples: torch.Tensor, out: str) -> str:
+        from ..render import write_transcript
+        return write_transcript(samples, self.decode, out)
+
     def evaluate(self, samples: torch.Tensor) -> dict:
         s = samples.clamp(max=self.NUM_DATA - 1).reshape(-1)
         return {

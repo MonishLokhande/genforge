@@ -1,0 +1,36 @@
+# @package _global_
+# hopper-medium-v2 on the 4-slot attention-capable temporal U-Net (attention=false — matches the
+# trained locomotion checkpoints) with the vp_cosine schedule those checkpoints were trained
+# under (the locomotion base defaults to vp_linear).
+#
+# Distinct from this dir's ddpm.yaml: that leaf is the 3-slot temporal_unet_janner under
+# vp_linear, and its ckpt_path is a DIFFERENT architecture — the two are not interchangeable.
+defaults:
+  - /experiment/robotics/locomotion/base
+  - override /schedule: vp_cosine
+  - _self_
+
+obs_dim: 11
+action_dim: 3
+
+# plugins lists REPLACE (yaml), so restate the base env plugin alongside the model plugin
+plugins:
+  - envs.robotics.locomotion
+  - experiment.robotics.locomotion
+
+environment:
+  params:
+    name: hopper-medium-v2
+
+# attention_unet is a plugin class (registered by experiment.robotics.locomotion above); select it
+# inline by name — overrides the base's temporal_unet_janner. dim/dim_mults/horizon/output_type
+# come from the base's inline model.params (identical values), so only the deltas live here.
+model:
+  name: attention_unet
+  params:
+    transition_dim: 14   # action_dim(3) + obs_dim(11)
+    attention: false     # matches the trained checkpoint (class default too, kept explicit)
+
+runner:
+  params:
+    ckpt_path: checkpoints/robotics/locomotion/hopper/attention_ddpm.pt

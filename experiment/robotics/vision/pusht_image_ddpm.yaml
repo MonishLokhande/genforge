@@ -1,0 +1,87 @@
+# @package _global_
+# PushT (IMAGE) — vision-conditioned closed-loop diffusion policy.
+#
+# Composes the groups directly rather than inheriting tierb_base/pusht, because those pin
+# `/model: temporal_unet_janner` and a lowdim obs layout; the vision model is a plugin
+# (experiment.robotics.vision) with no config-group leaf, so it is declared inline here —
+# same structure as can_image_ddpm.yaml.
+#
+# Data: lerobot/pusht_image (HF) — 96x96 RGB from `observation.image` (ONE camera) plus the 2-d
+# `observation.state` agent position as proprio. Rollout: gym_pusht/PushT-v0 under
+# obs_type="pixels_agent_pos" (set by LEROBOT_ENV_SPECS), which hands back {"pixels", "agent_pos"};
+# the adapter's stack_env_images maps `observation.image` -> "pixels". A lowdim obs_type would
+# silently roll this policy out on state vectors.
+#
+# Inv 9: images + proprio ride in `cond` and NEVER cross the membrane. The membrane (minmax)
+# normalizes only x = actions; proprio is normalized in-model by VisionUNet.obs_normalizer.
+defaults:
+  - /space: euclidean
+  - /schedule: vp_cosine
+  - /method: ddpm
+  - /sampler: ddpm
+  - /preprocessor: minmax
+  - /runner: policy_training
+  - _self_
+
+plugins:
+  - envs.robotics.hf_lowdim
+  - experiment.robotics.vision      # registers temporal_unet_image / vision_unet
+
+horizon: 16
+n_obs_steps: 2
+n_action_steps: 8
+action_dim: 2         # PushT end-effector target (x, y)
+proprio_dim: 2        # agent_pos(2) — the T-block state comes from the camera, not privileged state
+
+environment:
+  name: hf_lowdim
+  params:
+    name: lerobot/pusht_image
+    obs_keys: [observation.state]        # proprio only; pixels supply the rest
+    image_keys: [observation.image]      # opt-in: also yields episode["images"] + stack_env_images
+
+dataset:
+  name: trajectory_window
+  params:
+    horizon: ${horizon}
+    layout: actions_only
+    include_actions: false
+    pad_before: ${sub:${n_obs_steps},1}
+    pad_after: ${sub:${n_action_steps},1}
+    stride: 1
+    n_obs_steps: ${n_obs_steps}
+
+model:
+  name: temporal_unet_image
+  params:
+    horizon: ${horizon}
+    transition_dim: ${action_dim}
+    n_obs_steps: ${n_obs_steps}
+    n_cam: 1
+    proprio_dim: ${proprio_dim}
+    image_feat_dim: 64
+    dim: 256
+    dim_mults: [1, 2, 4]
+    cond_predict_scale: true
+    output_type: eps
+
+sampler:
+  params:
+    clip_denoised: true   # as trained; also REQUIRED for eps+vp_cosine over minmax→[-1,1]
+
+runner:
+  params:
+    steps: 100000
+    batch_size: 64
+    lr: 1.0e-4
+    weight_decay: 1.0e-6
+    ema_decay: 0.9999
+    n_obs_steps: ${n_obs_steps}
+    n_action_steps: ${n_action_steps}
+    n_rollout_episodes: 20
+    n_sample_steps: 100
+    max_episode_steps: 300
+    success_threshold: 0.95   # dp PushT success = max coverage >= 0.95
+    device: cuda
+    seed: 0
+    ckpt_path: checkpoints/robotics/pusht/image_ddpm.pt
