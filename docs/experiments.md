@@ -194,6 +194,25 @@ scaler — checkpoint format and resume are unchanged. Works on both CUDA and CP
 uv run forge train experiment=distributions/ddpm/base runner.params.amp=true
 ```
 
+### Gradient accumulation
+
+`runner.params.grad_accum=N` sums gradients over **N micro-batches** before each optimizer step, so
+the **effective batch is `batch_size × grad_accum`** at the memory cost of a single `batch_size`
+batch — the way to reach a large effective batch on a GPU that can't hold it. The micro-batch loss is
+scaled by `1/N`, so the summed gradient is identical to one backward over the full `batch_size × N`
+batch; `grad_clip`, `opt.step`, the LR schedule, and EMA all advance **once per optimizer step**.
+
+```bash
+# effective batch 1024 = 256 × 4, but only 256 samples resident at once
+uv run forge train experiment=distributions/ddpm/base runner.params.batch_size=256 runner.params.grad_accum=4
+```
+
+`grad_accum=1` (the default) is byte-identical to the single-batch loop, and resume stays
+bit-identical (Invariant 5) for any `grad_accum` on both the in-RAM and streaming data paths. Pairs
+with `amp` and `warmup_steps` (warmup counts **optimizer** steps, not micro-batches, so `steps` and
+the schedule are unchanged). Note the effective LR/step budget: `N`-accumulation does `steps`
+optimizer updates over `steps × N` micro-batches.
+
 ### Optimizer & LR schedule
 
 The optimizer is a set of `runner.params` knobs. The **defaults track the reference recipes**

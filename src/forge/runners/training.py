@@ -52,20 +52,26 @@ class _StepIndexSampler:
     in the runner's main-process ``dataset.augment`` hook instead.
     """
 
-    def __init__(self, n: int, pool, batch_size: int, seed: int, start_step: int, steps: int):
+    def __init__(self, n: int, pool, batch_size: int, seed: int, start_step: int, steps: int,
+                 grad_accum: int = 1):
         self.n, self.pool, self.batch_size = n, pool, int(batch_size)
         self.seed, self.start_step, self.steps = int(seed), int(start_step), int(steps)
+        self.grad_accum = int(grad_accum)     # gradient accumulation yields grad_accum micro-batches/step
 
     def __iter__(self):
         hi = self.n if self.pool is None else self.pool.numel()
-        for step in range(self.start_step, self.steps + 1):
+        # Iterate in MICRO-steps: one index draw per micro-batch, still pure in the micro index. At
+        # grad_accum=1 this is `range(start_step, steps+1)` with seed `…+step` — byte-identical.
+        start_micro = (self.start_step - 1) * self.grad_accum + 1
+        total_micro = self.steps * self.grad_accum
+        for micro in range(start_micro, total_micro + 1):
             g = torch.Generator()                                  # CPU: index draws are host-side
-            g.manual_seed((self.seed * 1_000_003 + step) & (2**63 - 1))   # arithmetic, not hash()
+            g.manual_seed((self.seed * 1_000_003 + micro) & (2**63 - 1))   # arithmetic, not hash()
             sel = torch.randint(0, hi, (self.batch_size,), generator=g)
             yield sel if self.pool is None else self.pool[sel]     # mirrors the fast path's val pool
 
     def __len__(self) -> int:
-        return max(0, self.steps - self.start_step + 1)
+        return max(0, (self.steps - self.start_step + 1) * self.grad_accum)
 
 
 class _BatchView:
@@ -107,6 +113,8 @@ class TrainingRunner(Runner):
         *,
         steps: int = 2000,
         batch_size: int = 256,
+        grad_accum: int = 1,                # micro-batches summed per optimizer step; effective batch
+                                            # = batch_size * grad_accum. 1 = disabled (byte-identical)
         lr: float = 1e-3,
         betas: tuple = (0.9, 0.999),         # Adam/AdamW moments; transformer training wants beta2≈0.95
         weight_decay: float = 0.0,
@@ -153,6 +161,9 @@ class TrainingRunner(Runner):
 
         self.steps = steps
         self.batch_size = batch_size
+        self.grad_accum = int(grad_accum)
+        if self.grad_accum < 1:
+            raise ValueError(f"grad_accum must be >= 1, got {grad_accum}.")
         self.lr = lr
         self.betas = betas
         self.weight_decay = weight_decay
@@ -227,7 +238,7 @@ class TrainingRunner(Runner):
         loader = DataLoader(
             _BatchView(self.dataset),
             sampler=_StepIndexSampler(n, self._train_idx, self.batch_size, self.seed + 1,
-                                      start_step, self.steps),
+                                      start_step, self.steps, self.grad_accum),
             batch_size=None,                    # one sampler item == one batch (see _BatchView)
             collate_fn=lambda b: b,             # already assembled; do not touch it
             num_workers=workers,
@@ -428,19 +439,25 @@ class TrainingRunner(Runner):
         )
         next_batch = self._make_batch_source(n, batch_gen, device, start_step)
         for step in step_iter:
-            batch = next_batch()                       # BatchProtocol — the batch's first entry point
-            BaseDataset.validate_batch(batch)          # enforce the contract BEFORE the membrane
-            x0 = batch.x0.to(device)
-            if self.preprocessor is not None:
-                x0 = self.preprocessor.transform(x0)   # membrane touches the generated quantity only
-            # Conditioning rides to the model's device but is NEVER pushed through the membrane (Inv 9).
-            cond = cond_to(batch.cond, device)
-            if augment is not None:
-                cond = augment(cond, generator=aug_gen)     # main process => resumable (Inv 5)
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.amp):
-                loss = self.method.loss(train_model, x0, cond=cond, generator=noise_gen)
             opt.zero_grad(set_to_none=True)
-            loss.backward()
+            loss = None                                # accumulated effective-batch loss (for logging)
+            # Sum grads over grad_accum micro-batches, then ONE optimizer step. grad_accum=1 is the
+            # single-batch loop verbatim (micro/1 is exact; zero_grad→backward→step order unchanged).
+            for _ in range(self.grad_accum):
+                batch = next_batch()                   # BatchProtocol — the batch's first entry point
+                BaseDataset.validate_batch(batch)      # enforce the contract BEFORE the membrane
+                x0 = batch.x0.to(device)
+                if self.preprocessor is not None:
+                    x0 = self.preprocessor.transform(x0)   # membrane touches the generated quantity only
+                # Conditioning rides to the model's device but is NEVER pushed through the membrane (Inv 9).
+                cond = cond_to(batch.cond, device)
+                if augment is not None:
+                    cond = augment(cond, generator=aug_gen)     # main process => resumable (Inv 5)
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.amp):
+                    micro = self.method.loss(train_model, x0, cond=cond, generator=noise_gen)
+                    micro = micro / self.grad_accum    # so summed grads equal one effective-batch step
+                micro.backward()                       # grads ACCUMULATE across the micro-batches
+                loss = micro.detach() if loss is None else loss + micro.detach()
             if self.grad_clip:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             opt.step()
@@ -448,7 +465,7 @@ class TrainingRunner(Runner):
                 lr_sched.step()
             self.ema.update(self.model)
 
-            self._last_losses.append(loss.detach())   # defer the device→host sync out of the hot loop
+            self._last_losses.append(loss)   # already detached; defer the device→host sync out of the loop
             self._completed_steps = step
             if self.log_every and (step % self.log_every == 0 or step == start_step):
                 lv = loss.item()   # one device→host sync on the log cadence (reused for both sinks)

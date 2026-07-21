@@ -2,6 +2,7 @@ name: training
 params:
   steps: 2000
   batch_size: 256
+  grad_accum: 1        # micro-batches summed per optimizer step; effective batch = batch_size*grad_accum
   lr: 1.0e-3
   optimizer: adamw     # adamw (decoupled decay) | adam (coupled L2); else → register your own runner
   weight_decay: 0.0    # adamw decouples this from the adaptive step; adam folds it into the gradient
