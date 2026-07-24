@@ -19,7 +19,7 @@ from torch import Tensor
 
 from forge.core.interfaces import Model
 from forge.core.registry import register
-from forge.models.temporal_unet_janner import TemporalUNetJanner
+from examples.models.temporal_unet_janner import TemporalUNetJanner
 
 
 def resnet18_groupnorm(feat_dim: int, groups: int = 16) -> nn.Module:

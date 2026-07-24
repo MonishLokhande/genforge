@@ -11,6 +11,7 @@ defaults:
   - _self_
 
 plugins:
+  - examples          # the moved method/sampler/schedule/model/... implementations
   - envs.robotics.hf_lowdim
 
 action_dim: 14       # ALOHA bimanual joint targets (2 arms × 7)

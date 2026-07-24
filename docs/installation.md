@@ -11,9 +11,11 @@ the package as a library, or clone the source for development and the bundled ex
 pip install genforge          # or: uv add genforge
 ```
 
-> **Note:** the PyPI wheel ships the framework only (`src/forge`). The bundled `envs/`
-> data-source plugins and `experiment/` recipes stay in the source repository. To point an
-> installed library at an experiment tree elsewhere on disk, set:
+> **Note:** the PyPI wheel ships the framework **plus one reference path** (`src/forge` — the
+> runnable 2-D DDPM stack). The concrete paradigm implementations (`examples/`), the `envs/`
+> data-source plugins, and the `experiment/` recipes stay in the source repository; an experiment
+> loads the paradigms it needs with `plugins: [examples]`. To point an installed library at an
+> experiment tree elsewhere on disk, set:
 >
 > ```bash
 > export GENFORGE_EXP_ROOT="/path/to/project_root_with_experiments/"
@@ -45,6 +47,17 @@ Extra args pass straight through to `uv sync`, e.g. `./install.sh --extra flow -
 
 This creates a `.venv` with the core framework only — enough for the 2-D distribution
 experiments.
+
+### Building the docs
+
+The documentation site (this site) is a `docs` dependency group. Serve it with live reload:
+
+```bash
+uv sync --group docs
+uv run --group docs mkdocs serve      # http://127.0.0.1:8000 ; --dev-addr 127.0.0.1:8080 to move it
+```
+
+`mkdocs build` renders the static site to `site/` instead.
 
 ---
 

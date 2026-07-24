@@ -54,6 +54,13 @@ component and **injects the already-built ones it names** into its constructor (
 not a linear chain). Solid = required dependency, dashed = optional; dashed nodes are optional to
 define. Everything terminates at the `Runner`, which owns the lifecycle.
 
+The installed package ships the contracts plus **one reference implementation of each axis** (the
+runnable 2-D DDPM stack: `euclidean` · `vp` · `mlp` · `ddpm` · `training`). Every other concrete
+paradigm — flow matching, discrete diffusion, the extra samplers/models/costs/controllers/runners —
+registers from the repo-root `examples/` tree, which an experiment loads with `plugins: [examples]`.
+The wiring does not distinguish the two: a plugin component is discovered and injected exactly like
+a built-in.
+
 <div class="gf-fig">
 <div class="gf-summary">
 <div class="gf-row"><span class="gf-tag">Compulsory</span><span class="gf-chip gf-req">space</span><span class="gf-chip gf-req">schedule</span><span class="gf-chip gf-req">model</span><span class="gf-chip gf-req">method</span><span class="gf-chip gf-req">sampler</span><span class="gf-chip gf-req">dataset</span><span class="gf-chip gf-req">runner</span></div>

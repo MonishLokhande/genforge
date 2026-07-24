@@ -14,20 +14,7 @@ import torch.nn as nn
 
 from ..core.interfaces import Model
 from ..core.registry import register
-
-
-def sinusoidal_embedding(t: torch.Tensor, dim: int, max_period: float = 10_000.0) -> torch.Tensor:
-    """Standard transformer-style sinusoidal embedding of a scalar time in [0, 1]."""
-    t = t.reshape(-1).float()
-    half = dim // 2
-    freqs = torch.exp(
-        -math.log(max_period) * torch.arange(half, device=t.device, dtype=torch.float32) / half
-    )
-    args = t[:, None] * freqs[None, :]
-    emb = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-    if dim % 2:  # zero-pad to an odd dim
-        emb = torch.cat([emb, torch.zeros_like(emb[:, :1])], dim=-1)
-    return emb
+from ..nn import sinusoidal_embedding
 
 
 @register("model", "mlp")

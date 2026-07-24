@@ -116,7 +116,7 @@ component needs no `configs/criterion/` group leaf:
 defaults:
   - /experiment/distributions/ddpm/base
   - _self_
-plugins: [envs.distributions, example_logcosh]   # your module alongside the env plugin
+plugins: [examples, envs.distributions, example_logcosh]   # examples (base's paradigms) + env + your module
 criterion: {name: logcosh}
 ```
 
@@ -129,11 +129,18 @@ That is the whole integration: `@register` + a `plugins:` line + an inline selec
 method, schedule, and runner never learned a new loss existed — DDPM reduces through whichever
 `criterion` is injected.
 
-!!! note "`forge list` shows built-ins, not experiment plugins"
-    `forge list` prints `criterion  huber, mse` — it never composes an experiment, so a criterion
-    registered only through a leaf's `plugins:` field appears when that experiment is *built*, not
-    in the catalog. To make a component list-visible everywhere, ship it as a `forge.plugins`
-    entry-point package (see [Extending](extending.md#installable-plugins-out-of-tree-packages)).
+!!! warning "A leaf's `plugins:` *replaces* the base's — re-list `examples`"
+    Hydra overwrites list values, so a `plugins:` line in the leaf drops the base's `[examples,
+    envs.distributions]` entirely. You must re-list `examples` (which carries the base recipe's own
+    metrics `mmd`/`energy`) alongside your module, or the build fails resolving them. Prefer adding
+    a plugin via the base when you can; override the whole list only when you mean to.
+
+!!! note "`forge list` shows the bundled catalog, not custom plugins"
+    `forge list` loads the built-ins plus the bundled `examples/` and `envs/*` packages, so it prints
+    `criterion  huber, mse` — but **not** `logcosh`, which is registered only through this
+    experiment's `plugins:` field. A custom, out-of-tree component appears when that experiment is
+    *built*, not in the base catalog. To make one list-visible everywhere, ship it as a
+    `forge.plugins` entry-point package (see [Extending](extending.md#installable-plugins-out-of-tree-packages)).
 
 ---
 

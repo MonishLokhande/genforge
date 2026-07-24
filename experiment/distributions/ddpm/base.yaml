@@ -17,6 +17,7 @@ defaults:
 
 # Concrete env plugin (loaded by the builder so its @register decorators fire).
 plugins:
+  - examples          # the moved method/sampler/schedule/model/... implementations
   - envs.distributions
 
 environment:

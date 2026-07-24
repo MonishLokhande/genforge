@@ -18,7 +18,7 @@ import torch.nn as nn
 
 from forge.core.interfaces import Model
 from forge.core.registry import register
-from forge.models.temporal_unet_janner import (
+from examples.models.temporal_unet_janner import (
     Downsample1d,
     ResidualTemporalBlock,
     _SinusoidalPosEmb,

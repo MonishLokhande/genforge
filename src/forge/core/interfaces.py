@@ -329,7 +329,7 @@ class Sampler(ABC):
           - ``{"pin": (indices, values)}``  — fix feature columns (2-D point conditioning);
           - ``{"inpaint": (mask, values)}`` — fix masked entries (trajectory start/goal pinning).
         """
-        from ..control.projection import Pin
+        from .conditioning import Pin
 
         pin = Pin.from_cond(cond)
         return pin.project(x) if pin is not None else x

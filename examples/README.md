@@ -1,7 +1,16 @@
 # examples
 
-How to add **your own** component to genforge from outside the package — one decorated class,
-zero wiring changes anywhere else.
+This directory plays **two roles**:
+
+- **The bundled paradigm catalog** — `methods/`, `samplers/`, `schedules/`, `models/`, `costs/`,
+  `control/`, `metrics/`, `runners/` hold every concrete implementation moved out of the installed
+  wheel (flow matching / OT-CFM, discrete D3PM / MDLM / SEDD, the DDIM / interpolant / τ-leaping
+  samplers, temporal-UNet / transformer models, guidance / projection / CBF controllers, …). The
+  framework keeps only **one reference path** in-tree; an experiment loads the rest with
+  `plugins: [examples]`. Importing the `examples` umbrella registers the whole catalog — that is
+  what `plugins: [examples]` and `forge list` rely on.
+- **A worked "add your own" script** (`custom_model_and_method.py`, below) — the template for
+  registering a component from *outside* the tree entirely: one decorated class, zero wiring changes.
 
 ## `custom_model_and_method.py`
 

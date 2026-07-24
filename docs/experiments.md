@@ -254,24 +254,32 @@ set it in the experiment leaf) exactly as you would any key the leaf omits.
 The configuration tree separates framework defaults from experiment recipes:
 
 ```text
-src/forge/configs/                # framework component defaults
+src/forge/configs/                # framework component defaults (a config group per axis)
 ├── space/
 ├── schedule/
-├── model/                        # MLP, temporal UNet, transformer
+├── model/                        # mlp (built-in) + temporal_unet / transformer leaves (impls in examples/)
 ├── method/
 ├── sampler/
 ├── cost/
 ├── control/
 ├── preprocessor/                 # standardize / minmax
-├── visualizer/                   # scatter / trajectory
+├── visualizer/                   # scatter / env_render / trajectory
 └── metric/                       # mmd, energy, w2, mode_coverage, val_loss, perplexity, metric_set
+
+examples/                         # concrete paradigm implementations — loaded via `plugins: [examples]`
+├── methods/                      # flow_matching, ot_cfm, d3pm, mdlm, sedd, value_training, conditional
+├── samplers/                     # ddim, flow, interpolant, tau_leaping, sedd
+├── models/                       # temporal_unet, transformer, categorical, value
+├── costs/ · control/             # halfspace/ball/box/barrier/… · guidance/projection/cbf/value_guidance/…
+└── schedules/ · spaces/ · metrics/ · runners/   # flow·discrete · discrete · mmd/energy/w2 · planning/policy/value
 
 experiment/                       # the experiment tree
 └── <family>/
     └── <variant>/
-        └── <method>.yaml         # leaf config; environment declared inline
+        └── <method>.yaml         # leaf config; environment + plugins declared inline
 ```
 
+* **Plugins load the implementations** — a config group names a leaf, but the *class* it selects must be registered. The framework registers only the reference path (`euclidean`/`vp`/`mlp`/`ddpm`/`training`); every other paradigm lives in `examples/`. So each bundled experiment lists `plugins: [examples, envs.<name>]` — `examples` loads the moved implementations, `envs.<name>` the data source. Omitting `examples` fails loudly when the builder can't resolve, say, `method: flow_matching`.
 * **Inline environments** — a leaf declares its `environment`/`dataset` inline (e.g. `environment: {name: tinystories, params: {batch_size: 64}}`) and loads the plugin package via its `plugins:` field.
 * **Base + delta** — every file is marked `# @package _global_`. A family `base.yaml` assembles the run by selecting one option per group in its `defaults:` list (`- /schedule: vp_cosine`, `- /model: temporal_unet_janner`, colon form), ending with `- _self_`. A leaf inherits that base by listing its absolute path — `- /experiment/<env>/<family>/base` (slash path, no `.yaml`) — again with `- _self_` **last** so the leaf's own values win, and states only the deltas. To replace a group the base already chose, use the `override` keyword: `- override /sampler: ddim`. Anything omitted falls back to the defaults in `src/forge/configs/`.
 * **Experiment root** — the tree is located via the `GENFORGE_EXP_ROOT` environment variable; if unset, the current working directory is used.

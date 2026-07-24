@@ -10,6 +10,7 @@
 # corpus, override environment.params.source=tinystories (needs `uv sync --extra text` + a GPU).
 
 plugins:
+  - examples          # the moved method/sampler/schedule/model/... implementations
   - envs.text.ar
 
 space:    { name: discrete,         params: { num_classes: 50257, length: 64 } }   # inert

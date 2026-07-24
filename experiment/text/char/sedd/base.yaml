@@ -13,6 +13,7 @@ defaults:
   - _self_
 
 plugins:
+  - examples          # the moved method/sampler/schedule/model/... implementations
   - envs.text
 
 space:

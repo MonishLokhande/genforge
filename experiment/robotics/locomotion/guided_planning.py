@@ -21,7 +21,7 @@ import numpy as np
 import torch
 
 from forge.core.registry import register
-from forge.control.value_guidance import AmortizedValueController
+from examples.control.value_guidance import AmortizedValueController
 from forge.runners.multistep import MultiStepWrapper
 from forge.utils.seeding import make_generator
 

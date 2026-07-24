@@ -15,6 +15,7 @@ action_dim: 3
 
 # plugins lists REPLACE (yaml), so restate the base env plugin alongside the model plugin
 plugins:
+  - examples          # the moved method/sampler/schedule/model/... implementations
   - envs.robotics.locomotion
   - experiment.robotics.locomotion
 

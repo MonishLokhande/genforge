@@ -85,6 +85,21 @@ def load_bundled_envs() -> None:
             continue
 
 
+def load_bundled_examples() -> None:
+    """Import the bundled example plugins (``examples/``) so the full component catalog registers.
+
+    The concrete methods / samplers / schedules / models / costs / controllers / concrete metrics /
+    planning runners live in the repo-root ``examples/`` tree (NOT the installed wheel), loaded via an
+    experiment's ``plugins: [examples]``. This best-effort import is for the paths that have no
+    ``plugins:`` selection — ``forge list`` (so the catalog still shows them) and ``build``'s fallback.
+    A bare ``pip install`` has only the reference path, so a missing ``examples`` package is tolerated."""
+    _ensure_repo_root_on_path()
+    try:
+        importlib.import_module("examples")
+    except ModuleNotFoundError:
+        pass
+
+
 def load_entrypoint_plugins() -> None:
     """Discover and import every installed package that advertises a ``forge.plugins`` entry point.
 

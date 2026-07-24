@@ -29,6 +29,7 @@ defaults:
   - _self_
 
 plugins:
+  - examples          # the moved method/sampler/schedule/model/... implementations
   - envs.robotics.locomotion
 
 horizon: 32

@@ -35,9 +35,10 @@ def _cmd_list(_args: argparse.Namespace) -> int:
     import_builtin_components()
     # Concrete envs are plugins (no experiment selected here), so import the bundled env packages
     # too — otherwise `list` would omit environments/datasets/env-preprocessors.
-    from .core.plugins import load_bundled_envs
+    from .core.plugins import load_bundled_envs, load_bundled_examples
 
     load_bundled_envs()
+    load_bundled_examples()  # concrete methods/samplers/... live in examples/ now — list them too
     reg = registry.registered()
     print("forge components")
     print("===================")

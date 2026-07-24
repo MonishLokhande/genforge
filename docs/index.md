@@ -137,9 +137,10 @@ Install the core framework from PyPI:
 pip install genforge          # or: uv add genforge
 ```
 
-> **Note:** the PyPI wheel ships the framework only. The bundled `experiment/` recipes and
-> `envs/` data-source plugins live in the source repository — running the bundled experiments
-> requires a clone.
+> **Note:** the PyPI wheel ships the framework **plus one reference path** (the runnable 2-D DDPM
+> stack). The full paradigm catalog (`examples/` — flow matching, discrete diffusion, the extra
+> samplers/models/controllers), the bundled `experiment/` recipes, and the `envs/` data-source
+> plugins live in the source repository — running the bundled experiments requires a clone.
 
 For development or the bundled experiments:
 

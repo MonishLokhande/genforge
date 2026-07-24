@@ -24,6 +24,7 @@ defaults:
   - _self_
 
 plugins:
+  - examples          # the moved method/sampler/schedule/model/... implementations
   - envs.robotics.hf_lowdim
   - experiment.robotics.vision      # registers temporal_unet_image / vision_unet
 

@@ -4,10 +4,14 @@ Every component joins the framework the same way: a class decorated with `@regis
 that implements the category's contract, plus (optionally) one config leaf. The builder discovers it
 through the registry — no other wiring. There are two homes for a new component:
 
-- **in-tree** — it ships inside `src/forge/` and is imported by the builder's built-in list.
+- **in-tree** — it ships inside `src/forge/` and is imported by the builder's built-in list. The
+  package keeps only the framework contracts plus **one reference implementation** of each axis (the
+  2-D DDPM stack) in-tree.
 - **as a plugin** — it lives in any importable module and is loaded by an experiment's `plugins:`
   field. This is how concrete environments work, and it is **not** limited to envs — a plugin module
-  can register *any* category.
+  can register *any* category. The bundled `examples/` tree is exactly this: every concrete paradigm
+  beyond the reference path (flow matching, discrete diffusion, the extra samplers / models /
+  controllers / runners) registers as a plugin, loaded with `plugins: [examples]`.
 
 ## Adding a model
 
@@ -144,23 +148,21 @@ Concrete data sources are plugins under `envs/<name>/`:
 
 ```
 envs/<name>/
-├── __init__.py      # exports Environment / Dataset / Processor; importing it fires the @register decorators
-├── environment.py   # the raw data source: sample(n, generator) -> (n, *shape)  [or rollouts() for trajectories]
-├── dataset.py       # a BaseDataset (gather/fit_tensor/num_items/sample_shape); optional if you reuse envs.common
-└── processor.py     # a BaseProcessor (env-specific PRE-membrane encoding: tokenize / pack / window)
+├── __init__.py      # exports Environment / Dataset; importing it fires the @register decorators
+└── environment.py   # the raw data source: sample(n, generator) -> (n, *shape)  [or rollouts() for trajectories]
 ```
 
-The data-boundary contracts live in `src/forge/core/protocols.py`:
+Add a `dataset.py` only when you need a custom `BaseDataset`; most envs reuse the generic
+`distribution` dataset from `envs/common/`, and any env-specific encoding (tokenizing, packing,
+windowing) lives in the environment or dataset itself. The two data-boundary contracts live in
+`src/forge/core/protocols.py`:
 
 - **`BatchProtocol`** — a batch as it enters the loop: `x0` (float32 or int64), optional `cond`,
   optional `mask`.
 - **`BaseDataset`** — `gather(idx)`/`fit_tensor`/`num_items`/`sample_shape` plus a `batch(idx)`
   entry point and `validate_batch`.
-- **`BaseProcessor`** — env-specific encoding *before* the normalization layer. This is **distinct**
-  from the `Preprocessor` normalization layer / "membrane" (`standardize`/`minmax`): a processor
-  tokenizes/packs, a preprocessor normalizes (centers and rescales). Don't merge them.
 
-An experiment names your env/dataset/processor inline — `environment: {name: mything, params: {...}}`,
+An experiment names your env/dataset inline — `environment: {name: mything, params: {...}}`,
 `dataset: {name: ...}` — and lists the package under `plugins:` so the `@register` decorators fire;
 there is no separate config-group overlay. Generic, env-agnostic datasets (e.g. the `distribution`
 "sample from any environment" dataset) live in `envs/common/` and are always available.
@@ -173,7 +175,8 @@ plugins:
 environment: { name: mything, params: {...} }
 ```
 
-`forge list` auto-discovers the bundled `envs/*` packages so the full catalog always prints.
+`forge list` auto-discovers the bundled `envs/*` and `examples/` packages so the full catalog always
+prints, even though neither is baked into the installed wheel.
 
 ### Image observations
 
@@ -223,6 +226,42 @@ experiment's `plugins:` list (so its `@register` decorators fire) before constru
 no `plugins:` declared, it falls back to importing every bundled env. The loader (`core/plugins.py`)
 puts the repo root on `sys.path` first, since the repo-root `envs/` tree is not part of the installed
 `genforge` package.
+
+## Importing components: the two paths and the wheel boundary
+
+A component reaches your run through one of two paths, and which one you use decides what has to be
+importable first:
+
+1. **By registry name** — a config selects it: `model: {name: transformer}`, or a defaults-group
+   entry `- /model: transformer`. The builder calls `registry.create("model", "transformer")`, which
+   succeeds only if the class's module was **already imported** so its `@register` fired. The config
+   leaf (`configs/model/transformer.yaml`) carries defaults only — it does **not** pull in the class.
+   The import happens via `plugins:`, an installed `forge.plugins` entry point, or the built-in list.
+2. **By direct import** — Python code does `from forge.models.transformer import Transformer` (to
+   subclass it, or to reach a symbol the registry doesn't expose). This resolves purely through
+   `sys.path` and ignores the registry.
+
+**What the installed wheel contains:** only `src/forge/` — the framework contracts plus the single
+reference path (continuous Euclidean VP-diffusion: `euclidean`, `vp_*`, `ddpm`, `mlp`,
+`standardize`/`minmax`). The repo-root `examples/` and `envs/` trees ship in **neither the wheel nor
+as importable `forge.*` modules**; they are bundled for the source tree and `forge list`, not for
+`pip install`. So against a `pip install genforge`, anything beyond the reference path fails:
+
+- `from forge.models.transformer import Transformer` → **`ModuleNotFoundError`** (it lives in
+  `examples/`, not the wheel).
+- `model: {name: transformer}` → **build-time error** unless something imported the class first.
+
+**Pulling an `examples/` paradigm into a downstream repo** — how a consumer uses the discrete or flow
+paradigms the reference wheel omits — two options, neither a fork of forge:
+
+- **Vendor + `plugins:`** — copy the module into an importable package of your own and keep its
+  `@register`. Each `examples/` module is a self-contained leaf (it imports only `forge.core.*` and
+  `forge.nn`, both in the wheel), so it moves with no edits. Load it with `plugins: [your_pkg.models]`
+  and both paths work: `model: {name: transformer}` resolves, and `from your_pkg... import` imports.
+  Registering it inside your always-loaded `envs.common` makes it available to every experiment with
+  no per-config `plugins:` line.
+- **Installable plugin** — package it with a `forge.plugins` entry point (next section); then it is
+  discovered with no `plugins:` line at all.
 
 ## Installable plugins (out-of-tree packages)
 

@@ -46,64 +46,26 @@ BUILD_ORDER: tuple[str, ...] = (
 # here. Only framework categories (spaces/schedules/models/methods/samplers/costs/control, the
 # generic ``standardize``/``minmax`` preprocessors, and runners) are built in.
 _BUILTIN_MODULES: tuple[str, ...] = (
-    # Phase 1 — continuous DDPM on 2-D distributions.
+    # The framework core's own dependency: the Pin controller used by the base sample loop.
+    "forge.core.conditioning",
+    # ── the ONE reference implementation of each axis (the runnable 2-D DDPM path) ──
     "forge.spaces.euclidean",
     "forge.schedules.vp",
     "forge.models.mlp",
     "forge.methods.criterion",
     "forge.methods.ddpm",
     "forge.samplers.ddpm",
-    "forge.runners.training",
-    # Phase 1.5 — the preprocessor membrane.
     "forge.preprocessing.standardize",
     "forge.preprocessing.minmax",
-    # Phase 2 — flow matching + DDIM (paradigm axis: zero edits to space/schedule base).
-    "forge.schedules.flow",
-    "forge.methods.flow_matching",
-    "forge.methods.ot_cfm",
-    "forge.samplers.flow",
-    "forge.samplers.interpolant",
-    "forge.samplers.ddim",
-    # Phase 3 — discrete D3PM (space axis: cont/disc confined to space + schedule).
-    "forge.spaces.discrete",
-    "forge.schedules.discrete",
-    "forge.methods.d3pm",
-    "forge.methods.mdlm",
-    "forge.methods.sedd",
-    "forge.samplers.tau_leaping",
-    "forge.samplers.sedd",
-    "forge.models.categorical",
-    "forge.models.transformer",
-    # Phase 4 — the control layer (cost + online controllers).
-    "forge.costs.halfspace",
-    "forge.costs.box",
-    "forge.costs.ball",
-    "forge.costs.likelihood",
-    "forge.control.projection",
-    "forge.control.guidance",
-    "forge.costs.barrier",
-    "forge.control.cbf",
-    # Phase 5 — trajectory pipeline (windowed planning).
-    "forge.models.temporal_unet",
-    "forge.models.temporal_unet_janner",
-    "forge.methods.conditional",
-    "forge.visualizations.trajectory",
+    "forge.runners.training",
+    # Generic, env-agnostic renderers kept in-package (scatter = 2-D reference; env_render just
+    # dispatches to environment.visualize()). metric_set is the composer, not a concrete metric.
     "forge.visualizations.scatter",
     "forge.visualizations.env_render",
-    "forge.metrics.distribution",
-    "forge.metrics.coverage",
-    "forge.metrics.likelihood",
     "forge.metrics.metric_set",
-    "forge.runners.planning",
-    "forge.runners.policy_training",
-    # Phase 6 — amortized control (value / FBSDE), method↔control via checkpoint only.
-    "forge.costs.reward",
-    "forge.models.value",
-    "forge.methods.value_training",
-    "forge.methods.fbsde",
-    "forge.runners.value_training",
-    "forge.control.value_guidance",
-    "forge.control.fbsde_control",
+    # Every other method / sampler / schedule / model / cost / controller / concrete metric /
+    # planning runner is an out-of-tree EXAMPLE under examples/, loaded via an experiment's
+    # `plugins: [examples]` field (see examples/README.md). The package ships contracts + one path.
 )
 
 
@@ -217,13 +179,14 @@ def build(cfg: Any):
     # ``@register`` decorators fire before any ``registry.get`` (Invariant 7). With no declaration
     # (e.g. an old checkpoint's config, or an inline test config relying on auto-registration), fall
     # back to importing every bundled env so the build still resolves.
-    from .plugins import load_bundled_envs, load_plugins
+    from .plugins import load_bundled_envs, load_bundled_examples, load_plugins
 
     declared = _plugins(cfg)
     if declared:
         load_plugins(declared)
     else:
         load_bundled_envs()
+        load_bundled_examples()
 
     present = [c for c in BUILD_ORDER if _leaf(cfg, c) is not None]
     if not present:
